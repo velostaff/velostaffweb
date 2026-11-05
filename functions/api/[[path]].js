@@ -155,6 +155,7 @@ export async function onRequest(context) {
     console.error(error);
     const message = String(error?.message || '');
     const safe = message.includes('MONGODB_URI') ? 'Mongo secret missing' : message.match(/auth|password|authentication/i) ? 'Mongo authentication failed' : message.match(/server selection|timed out|ENOTFOUND|network/i) ? 'Mongo network access failed' : 'Mongo server setup error';
-    return fail(safe, 500);
+    const detail = message.replace(/mongodb(?:\+srv)?:\/\/[^@\s]+@/gi, 'mongodb://***@').slice(0, 220);
+    return json({ error: safe, code: String(error?.name || 'UnknownError'), detail }, 500);
   }
 }
