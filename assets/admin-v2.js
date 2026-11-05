@@ -4,9 +4,24 @@
   const key = 'velostaff-direct-admin-v3';
   const backup = window.KV_CATALOG || {plugins: [], settings: {}};
   let state, page = 'overview', editor = null;
+  const online = location.protocol !== 'file:';
+  let token = sessionStorage.getItem('velostaff-api-token') || '';
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   const title = os => os === 'mac' ? 'MAC' : 'WINDOWS';
 
+  async function api(path, method = 'GET', payload) {
+    const headers = token ? { authorization: `Bearer ${token}` } : {};
+    if (payload !== undefined) headers['content-type'] = 'application/json';
+    const response = await fetch(`/api${path}`, { method, headers, body: payload === undefined ? undefined : JSON.stringify(payload) });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.error || 'Server error');
+    return data;
+  }
+  async function loadOnline() {
+    const data = await api('/admin/bootstrap');
+    state = { plugins:data.plugins || [], settings:data.settings || {}, emergency:data.emergency || {enabled:false,plugins:[]}, requests:data.requests || [] };
+    state.plugins.forEach(p => { p.platformCategories ??= {}; p.platformCategories.mac ??= p.category || 'General'; p.platformCategories.windows ??= p.category || 'General'; });
+  }
   function load() {
     try { state = JSON.parse(localStorage.getItem(key) || ''); } catch (_) {}
     state ??= {plugins: backup.plugins || [], settings: backup.settings || {}, emergency: {enabled:false,plugins:[]}, requests:[]};
@@ -20,7 +35,7 @@
     });
     save();
   }
-  function save() { localStorage.setItem(key, JSON.stringify(state)); }
+  function save() { if (!online) localStorage.setItem(key, JSON.stringify(state)); }
   function toast(msg) { const el = $('#toast'); if (!el) return; el.textContent = msg; el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 2300); }
   function cat(p, os) { return p.platformCategories?.[os] || p.category || 'General'; }
   function nav() {
@@ -62,11 +77,11 @@
   function security() { return '<div class="section-row"><div><div class="red-label">SECURITY</div><h3>SECURITY<span>.</span></h3></div></div><div class="content-box"><h4>DIRECT HTML MODE</h4><p>Admin and moderator access can be configured here for this browser.</p></div>'; }
   function render() {
     const view={overview,plugins,messages,emergency,settings,security}[page]();
-    $('#app').innerHTML = `${nav()}<div class="admin-main"><header class="admin-top"><div><span class="red-label">VELO STAFF / MANAGEMENT</span><h2>${page[0].toUpperCase()+page.slice(1)}</h2></div><button id="quickAdd" class="primary">+ ADD PLUGIN</button></header><div class="app-content">${view}</div><footer class="admin-footer"><span>VELO STAFF</span><span>DIRECT BROWSER STORAGE</span></footer></div>`;
+    $('#app').innerHTML = `${nav()}<div class="admin-main"><header class="admin-top"><div><span class="red-label">VELO STAFF / MANAGEMENT</span><h2>${page[0].toUpperCase()+page.slice(1)}</h2></div><button id="quickAdd" class="primary">+ ADD PLUGIN</button></header><div class="app-content">${view}</div><footer class="admin-footer"><span>VELO STAFF</span><span>${online?'MONGODB LIVE SYNC':'DIRECT BROWSER STORAGE'}</span></footer></div>`;
     $('#app').classList.remove('hidden'); $('#login').classList.add('hidden');
     $('#quickAdd').onclick=()=>{page='plugins';editor={os:'windows',plugin:null};render()};
-    if(page==='settings') $('#settingsForm').onsubmit=e=>{e.preventDefault();state.settings={...state.settings,...Object.fromEntries(new FormData(e.currentTarget))};save();toast('Settings saved')};
-    if(page==='emergency') $('#toggleEmergency').onclick=()=>{state.emergency.enabled=!state.emergency.enabled;save();render();toast('Emergency Mode updated')};
+    if(page==='settings') $('#settingsForm').onsubmit=async e=>{e.preventDefault();const next={...state.settings,...Object.fromEntries(new FormData(e.currentTarget))};try{if(online){state.settings=(await api('/admin/settings','POST',next)).settings}else{state.settings=next;save()}toast('Settings saved')}catch(error){toast(error.message)}};
+    if(page==='emergency') $('#toggleEmergency').onclick=async()=>{try{const enabled=!state.emergency.enabled;if(online){state.emergency=(await api('/admin/emergency/toggle','POST',{enabled})).emergency}else{state.emergency.enabled=enabled;save()}render();toast('Emergency Mode updated')}catch(error){toast(error.message)}};
   }
   $('#app').addEventListener('click', e => {
     const pageBtn=e.target.closest('[data-page]');
@@ -77,24 +92,30 @@
     if(b.hasAttribute('data-add')){b.previousElementSibling.insertAdjacentHTML('beforeend',alt());return}
     if(b.hasAttribute('data-remove')){b.closest('.link-row')?.remove();return}
     if(b.dataset.edit){editor={os:b.dataset.os,plugin:state.plugins.find(p=>p.id===b.dataset.edit)};render();return}
-    if(b.dataset.delete){if(!confirm('Delete this plugin?'))return;state.plugins=state.plugins.filter(p=>p.id!==b.dataset.delete);save();render();toast('Plugin deleted');return}
+    if(b.dataset.delete){if(!confirm('Delete this plugin?'))return;if(online){api(`/admin/plugins/${encodeURIComponent(b.dataset.delete)}`,'DELETE').then(loadOnline).then(()=>{render();toast('Plugin deleted')}).catch(error=>toast(error.message))}else{state.plugins=state.plugins.filter(p=>p.id!==b.dataset.delete);save();render();toast('Plugin deleted')}return}
     if(b.dataset.renameCategory){
       e.preventDefault();e.stopPropagation();
       const old=b.dataset.renameCategory, os=b.dataset.os, next=prompt(`Rename ${title(os)} category`,old)?.trim();
       if(!next||next===old)return;
       state.plugins.forEach(p=>{if(p.platforms?.[os]?.url&&cat(p,os)===old){p.platformCategories??={};p.platformCategories[os]=next}});
-      save();render();toast(`${title(os)} category renamed`);
+      if(online){Promise.all(state.plugins.filter(p=>p.platforms?.[os]?.url&&cat(p,os)===old).map(p=>api(`/admin/plugins/${encodeURIComponent(p.id)}`,'PUT',p))).then(loadOnline).then(()=>{render();toast(`${title(os)} category renamed`)}).catch(error=>toast(error.message))}else{save();render();toast(`${title(os)} category renamed`)}
     }
   });
-  $('#app').addEventListener('submit', e => {
+  $('#app').addEventListener('submit', async e => {
     const f=e.target;if(!f.matches('[data-form]'))return;e.preventDefault();
     const os=f.dataset.os, fd=new FormData(f), old=editor?.plugin;
     const p=old?structuredClone(old):{id:crypto.randomUUID(),platforms:{mac:{},windows:{}},createdAt:new Date().toISOString(),updatedBy:'Admin'};
     p.title=fd.get('pluginTitle').trim();p.version=fd.get('version').trim();p.description??='';
     p.platforms??={mac:{},windows:{}};p.platforms[os]={url:fd.get('url').trim(),alternatives:[...f.querySelectorAll('.alternatives input')].map(x=>x.value.trim()).filter(Boolean)};
     p.platformCategories??={};p.platformCategories[os]=fd.get('category').trim()||'General';p.category??=p.platformCategories[os];p.updatedAt=new Date().toISOString();
-    if(old)state.plugins[state.plugins.findIndex(x=>x.id===old.id)]=p;else state.plugins.unshift(p);
-    editor=null;save();render();toast('Plugin saved — refresh index.html');
+    try{if(online){await api(old?`/admin/plugins/${encodeURIComponent(old.id)}`:'/admin/plugins',old?'PUT':'POST',p);await loadOnline()}else{if(old)state.plugins[state.plugins.findIndex(x=>x.id===old.id)]=p;else state.plugins.unshift(p);save()}editor=null;render();toast(online?'Plugin saved — live now':'Plugin saved — refresh index.html')}catch(error){toast(error.message)}
   });
-  load();render();
+  async function startOnline(){
+    const login=$('#login'), app=$('#app'), form=$('#loginForm');
+    async function enter(){try{await loadOnline();render()}catch(_){app.classList.add('hidden');login.classList.remove('hidden')}}
+    if(token){await enter();if(!app.classList.contains('hidden'))return}
+    app.classList.add('hidden');login.classList.remove('hidden');
+    form.addEventListener('submit',async event=>{event.preventDefault();const error=$('#loginError');error.textContent='';try{const data=await api('/login','POST',{username:$('#username').value.trim(),password:$('#password').value});token=data.token;sessionStorage.setItem('velostaff-api-token',token);await loadOnline();render();$('#password').value=''}catch(err){error.textContent=err.message}});
+  }
+  if(online)startOnline();else{load();render()}
 })();
