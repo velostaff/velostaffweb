@@ -153,6 +153,8 @@ export async function onRequest(context) {
     return fail('Route not found', 404);
   } catch (error) {
     console.error(error);
-    return fail('Server setup error', 500);
+    const message = String(error?.message || '');
+    const safe = message.includes('MONGODB_URI') ? 'Mongo secret missing' : message.match(/auth|password|authentication/i) ? 'Mongo authentication failed' : message.match(/server selection|timed out|ENOTFOUND|network/i) ? 'Mongo network access failed' : 'Mongo server setup error';
+    return fail(safe, 500);
   }
 }
