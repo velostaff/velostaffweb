@@ -96,6 +96,11 @@ function normalPlugin(data, old = {}) {
 
 export async function onRequest(context) {
   const { request, env, params } = context;
+  if (env.API_WORKER_URL) {
+    const source = new URL(request.url);
+    const target = new URL(source.pathname + source.search, env.API_WORKER_URL);
+    return fetch(new Request(target, request));
+  }
   const method = request.method.toUpperCase();
   const part = Array.isArray(params.path) ? params.path.join('/') : (params.path || '');
   const path = '/' + part;

@@ -1,6 +1,7 @@
 # Velo Staff MongoDB deployment
 
-This project uses a Cloudflare Pages Function at `/api/*`.
+This project uses a Cloudflare Pages Function as an HTTPS proxy at `/api/*` and
+a dedicated Cloudflare Worker for the MongoDB connection.
 
 ## Cloudflare Pages settings
 
@@ -19,9 +20,13 @@ Do not add secrets to GitHub, HTML files, or `catalog.js`.
 
 ## Deploy
 
-Commit and push the `package.json` and `functions/` files. Cloudflare installs
-the MongoDB driver, deploys the Pages Function, and makes `/api/state`
-available on the same Velo Staff domain.
+Commit and push the files. Then deploy the dedicated API Worker:
+
+`npx wrangler deploy --config worker/wrangler.toml`
+
+Set `MONGODB_URI`, `ADMIN_PASSWORD`, and `AUTH_SECRET` as Worker secrets.
+Copy the deployed Worker URL and save it in the Pages project as the production
+text variable `API_WORKER_URL`. The Pages Function proxies `/api/*` to it.
 
 ## First live check
 
