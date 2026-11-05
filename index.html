@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#070709">
+<meta name="description" content="Velostaff — plugins, effects and extensions for Windows and macOS.">
+<title>Velostaff — Creator Tools</title>
+<link rel="stylesheet" href="assets/site.css"><link rel="stylesheet" href="assets/velostaff.css"><link rel="stylesheet" href="assets/motion-overlay.css"><link rel="stylesheet" href="assets/filter-layout.css"><link rel="stylesheet" href="assets/lens-blur.css"><link rel="stylesheet" href="assets/empty-state-off.css"><link rel="stylesheet" href="assets/headline-dot.css"><link rel="stylesheet" href="assets/plugins-heading.css"><link rel="stylesheet" href="assets/request-form.css"><link rel="stylesheet" href="assets/emergency-public.css"><link rel="stylesheet" href="assets/emergency-normal-site.css"><link rel="stylesheet" href="assets/emergency-banner-off.css"><link rel="stylesheet" href="assets/public-categories.css"><link rel="stylesheet" href="assets/footer-brand-style.css"><link rel="stylesheet" href="assets/public-categories-refined.css">
+<script src="catalog.js"></script>
+<script defer src="assets/site.js"></script><script defer src="assets/public-categories.js"></script>
+<script defer src="assets/fallback.js"></script>
+<script defer src="assets/scene.js"></script>
+</head><body>
+<div id="emergencyNotice">VELO STAFF / EMERGENCY MODE — LIMITED PLUGIN ACCESS</div><div class="noise-free-vignette" aria-hidden="true"></div>
+<canvas id="birds" aria-hidden="true"></canvas>
+<canvas id="sculpture" aria-hidden="true"></canvas>
+<div class="cursor-core" id="cursorCore" aria-hidden="true"></div><div class="cursor-ring" id="cursorRing" aria-hidden="true"></div>
+<div class="progress-bar" id="progressBar"></div>
+<header class="site-header">
+ <a class="wordmark" href="#home" aria-label="Velostaff home"><span class="logo-symbol"><span>VS</span></span><span class="logo-label"><span id="brandName">VELOSTAFF</span><small>CREATOR TOOLS</small></span></a>
+ <nav aria-label="Primary"><a href="#home" class="nav-active">HOME <span>01</span></a><a href="#plugins">PLUGINS <span>02</span></a></nav>
+ <a id="discordLink" class="discord-link" href="https://discord.gg/Yx5VaqPtFq" target="_blank" rel="noopener noreferrer">DISCORD ↗</a>
+ <div class="header-status"><span class="pulse"></span> <span id="announcementLabel">FREE ACCESS</span> <span class="header-dot">/</span> 2026</div>
+ <a href="#plugins" class="header-mobile">EXPLORE <span>↗</span></a>
+</header>
+<main>
+ <section id="home" class="hero cinematic">
+   <div class="hero-ambient"></div>
+   <div class="hero-copy">
+    <div class="eyebrow"><i></i> CREATOR TOOLS, CLEARLY ORGANISED</div>
+    <h1>YOUR<br><span>NEXT</span><br><em>PLUGIN<span class="period">.</span></em></h1>
+    <p id="heroSubtitle">Useful plugins, effects and extensions for creators — clearly organised for Windows and macOS.</p>
+    <div class="hero-actions"><a class="cta" href="#plugins"><span>EXPLORE PLUGINS</span><span class="cta-arrow">↗</span></a><span class="hero-action-note">WINDOWS + MACOS<br>100% FREE. NO CATCH.</span></div>
+   </div>
+   <div class="hero-3d-caption"><span class="caption-line"></span><span>VELOSTAFF / 001<br>CREATOR LIBRARY<br>WINDOWS + MACOS</span></div>
+   <div class="hero-bottom"><span><b>01</b> / VELOSTAFF</span><div class="scroll-note"><span>SCROLL TO EXPLORE</span><div class="scroll-line"><i></i></div></div><span class="hero-count">FREE CREATOR TOOLS</span></div>
+ </section>
+ <section id="plugins" class="vault">
+  <div class="vault-top"><div><div class="eyebrow"><i></i> PUBLIC RELEASES <span>[ 003 — 003 ]</span></div><h2 class="plugins-heading">PLUGINS<span>.</span></h2><p>Find your next unfair advantage. Downloads are free, always.</p></div><div class="vault-index"><span>INDEX OF RELEASES</span><strong id="totalPlugins">00</strong><span>LIVE TOOLS</span></div></div>
+  <div class="vault-toolbar"><div class="os-filters" role="group" aria-label="Filter by operating system"><button type="button" data-platform="all" class="active">ALL SYSTEMS <small>↗</small></button><button type="button" data-platform="windows">WINDOWS <small>↗</small></button><button type="button" data-platform="mac">MACOS <small>↗</small></button></div><label class="search-box"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="10.7" cy="10.7" r="6.2"/><path d="m15.4 15.4 5 5"/></svg><input id="searchInput" type="search" placeholder="SEARCH THE VAULT" autocomplete="off" aria-label="Search plugins"><kbd>⌕</kbd></label></div>
+  <div id="categoryFilters" class="categories"></div>
+  <div class="catalog-header"><span>NAME / DESCRIPTION</span><span>PLATFORM / ACCESS</span></div>
+  <div id="pluginGrid" class="plugin-grid"></div>
+  <div id="emptyState" class="empty-vault"><div class="empty-art"><div class="empty-orbit"><span>KV</span></div></div><div><div class="small-red">/ CURATED COLLECTION</div><h3>THE NEXT RELEASE<br>IS <em>COMING.</em></h3><p>New tools are being prepared for the vault. Check back for free Windows and macOS releases.</p></div><span class="empty-number">000 / ENTRY</span></div>
+  <div class="vault-bottom"><span><i class="mini-pulse"></i> INDEPENDENTLY CRAFTED / FREE TO DOWNLOAD</span><a href="#home">BACK TO TOP ↗</a></div>
+ </section>
+</main>
+<footer><div class="footer-brand"><span id="footerBrand">VELOSTAFF</span><span class="footer-period">.</span></div><div class="footer-bottom"><span>© <span id="year"></span> VELOSTAFF. ALL RIGHTS RESERVED.</span><span>BUILT FOR CREATORS.</span><a href="#home">BACK TO TOP ↑</a></div></footer>
+<aside class="feedback-widget" aria-label="Request a plugin"><button id="feedbackToggle" type="button">REQUEST A PLUGIN <span>+</span></button><form id="feedbackForm" class="feedback-form hidden"><strong>REQUEST A PLUGIN</strong><p>Tell Velo Staff what you need. We will match your request when it becomes available.</p><label>PLUGIN NAME <input id="feedbackPlugin" maxlength="100" required placeholder="e.g. Deep Glow"></label><label>PLATFORM <select id="feedbackPlatform" required><option value="windows">Windows</option><option value="mac">macOS</option></select></label><label>EMAIL ADDRESS <input id="feedbackEmail" maxlength="180" type="email" placeholder="For availability updates"></label><label>YOUR NAME <input id="feedbackName" maxlength="60" placeholder="Optional"></label><label>MESSAGE <textarea id="feedbackMessage" maxlength="1200" placeholder="Optional notes"></textarea></label><label class="request-check"><input id="feedbackNotify" type="checkbox"> Notify me by email when available</label><button type="submit">SEND REQUEST ↗</button></form></aside>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body></html>
