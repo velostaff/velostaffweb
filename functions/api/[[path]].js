@@ -3,7 +3,7 @@ const fail = (message, status = 400) => json({ error: message }, status);
 
 function clean(value, length = 300) { return String(value ?? '').trim().slice(0, length); }
 function validUrl(value) { try { const url = new URL(value); return /^https?:$/.test(url.protocol) ? url.href : ''; } catch { return ''; } }
-function initialState() { return { plugins: [], settings: { siteName: 'VELO STAFF', discordUrl: 'https://discord.gg/Yx5VaqPtFq', tagline: '', announcement: '' }, emergency: { enabled: false, plugins: [] }, requests: [], sessions: [], moderators: [], adminAccount: null, updatedAt: new Date().toISOString() }; }
+function initialState() { return { plugins: [], settings: { siteName: 'VELO STAFF', discordUrl: 'https://discord.gg/Yx5VaqPtFq', tagline: '', announcement: '' }, emergency: { enabled: false, plugins: [] }, requests: [], sessions: [], moderators: [], adminAccount: null, analytics: { presence: {}, pageViews: [] }, updatedAt: new Date().toISOString() }; }
 async function database(env) {
   if (!env.VELO_DB) throw new Error('VELO_DB D1 binding is not configured');
   await env.VELO_DB.exec('CREATE TABLE IF NOT EXISTS velostaff_state (id TEXT PRIMARY KEY, data TEXT NOT NULL)');
@@ -16,6 +16,13 @@ async function stateDoc(db) {
   const doc = initialState(); await persist(db, doc); return doc;
 }
 function publicState(doc) { return { plugins: doc.emergency?.enabled ? (doc.emergency.plugins || []) : (doc.plugins || []), settings: doc.settings || {}, emergency: !!doc.emergency?.enabled }; }
+function analyticsSummary(doc) {
+  const analytics = doc.analytics || { presence: {}, pageViews: [] }, now = Date.now(), activeSince = now - 90 * 1000, daySince = now - 24 * 60 * 60 * 1000;
+  analytics.presence ??= {}; analytics.pageViews ??= [];
+  for (const [id, seenAt] of Object.entries(analytics.presence)) if (seenAt < activeSince) delete analytics.presence[id];
+  analytics.pageViews = analytics.pageViews.filter(item => item.at > daySince).slice(-5000);
+  return { liveVisitors: Object.keys(analytics.presence).length, pageViews24h: analytics.pageViews.length };
+}
 async function passwordRecord(password) {
   const salt = crypto.randomUUID();
   const bytes = new TextEncoder().encode(`${salt}:${password}`);
@@ -63,6 +70,14 @@ export async function onRequest(context) {
   try {
     const db = await database(env), doc = await stateDoc(db);
     if (method === 'GET' && path === '/state') return json(publicState(doc));
+    if (method === 'POST' && path === '/track') {
+      const data = await body(request), visitorId = clean(data.visitorId, 80);
+      if (!/^[a-z0-9-]{16,80}$/i.test(visitorId)) return fail('Invalid visitor');
+      const now = Date.now(); doc.analytics ??= { presence: {}, pageViews: [] }; doc.analytics.presence ??= {}; doc.analytics.pageViews ??= [];
+      doc.analytics.presence[visitorId] = now;
+      if (data.event === 'pageview') doc.analytics.pageViews.push({ at: now });
+      const analytics = analyticsSummary(doc); await persist(db, doc); return json({ ok: true, analytics });
+    }
     if (method === 'POST' && path === '/login') {
       const data = await body(request);
       const username = clean(data.username, 60);
@@ -82,7 +97,8 @@ export async function onRequest(context) {
     const actor = authorised(request, doc);
     if (!actor) return fail('Sign in required', 401);
     const isAdmin = actor.role === 'admin';
-    if (method === 'GET' && path === '/admin/bootstrap') return json({ plugins: doc.plugins, settings: doc.settings, emergency: doc.emergency, requests: doc.requests, moderators: isAdmin ? doc.moderators : [], actor: { role: actor.role, name: actor.username } });
+    if (method === 'GET' && path === '/admin/bootstrap') return json({ plugins: doc.plugins, settings: doc.settings, emergency: doc.emergency, requests: doc.requests, moderators: isAdmin ? doc.moderators : [], actor: { role: actor.role, name: actor.username }, analytics: analyticsSummary(doc) });
+    if (method === 'GET' && path === '/admin/analytics') { if (!isAdmin) return fail('Admin permission required', 403); return json({ analytics: analyticsSummary(doc) }); }
     if (method === 'POST' && path === '/admin/plugins') { const plugin = normalPlugin(await body(request)); doc.plugins.unshift(plugin); doc.updatedAt = new Date().toISOString(); await persist(db, doc); return json({ plugin }, 201); }
     const pluginMatch = path.match(/^\/admin\/plugins\/([\w-]+)$/);
     if (pluginMatch && method === 'PUT') { const index = doc.plugins.findIndex(p => p.id === pluginMatch[1]); if (index < 0) return fail('Plugin not found', 404); doc.plugins[index] = normalPlugin(await body(request), doc.plugins[index]); doc.updatedAt = new Date().toISOString(); await persist(db, doc); return json({ plugin: doc.plugins[index] }); }

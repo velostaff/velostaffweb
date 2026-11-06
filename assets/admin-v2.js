@@ -19,12 +19,12 @@
   }
   async function loadOnline() {
     const data = await api('/admin/bootstrap');
-    state = { plugins:data.plugins || [], settings:data.settings || {}, emergency:data.emergency || {enabled:false,plugins:[]}, requests:data.requests || [], moderators:data.moderators || [], actor:data.actor || {role:'admin',name:'Admin'} };
+    state = { plugins:data.plugins || [], settings:data.settings || {}, emergency:data.emergency || {enabled:false,plugins:[]}, requests:data.requests || [], moderators:data.moderators || [], actor:data.actor || {role:'admin',name:'Admin'}, analytics:data.analytics || {liveVisitors:0,pageViews24h:0} };
     state.plugins.forEach(p => { p.platformCategories ??= {}; p.platformCategories.mac ??= p.category || 'General'; p.platformCategories.windows ??= p.category || 'General'; });
   }
   function load() {
     try { state = JSON.parse(localStorage.getItem(key) || ''); } catch (_) {}
-    state ??= {plugins: backup.plugins || [], settings: backup.settings || {}, emergency: {enabled:false,plugins:[]}, requests:[], moderators:[], actor:{role:'admin',name:'Admin'}};
+    state ??= {plugins: backup.plugins || [], settings: backup.settings || {}, emergency: {enabled:false,plugins:[]}, requests:[], moderators:[], actor:{role:'admin',name:'Admin'},analytics:{liveVisitors:0,pageViews24h:0}};
     state.plugins ??= []; state.requests ??= [];
     state.emergency ??= {enabled:false,plugins:[]}; state.emergency.plugins ??= [];
     // Old shared categories are copied once, then Mac and Windows stay independent.
@@ -72,7 +72,8 @@
   function plugins() { return `<div class="section-row"><div><div class="red-label">ORGANISED LIBRARY</div><h3>PLUGINS<span>.</span></h3><p>Mac and Windows categories are separate. Editing one never changes the other.</p></div></div><div class="platform-columns">${panel('mac')}${panel('windows')}</div>`; }
   function overview() {
     const p = state.plugins, m = p.filter(x=>x.platforms?.mac?.url).length, w = p.filter(x=>x.platforms?.windows?.url).length;
-    return `<div class="intro"><div><div class="red-label">SYSTEM OVERVIEW</div><h3>COMMAND<br><em>CENTER.</em></h3><p>Manage your plugin library from one workspace.</p></div><div class="intro-mark">V<span>S</span></div></div><div class="stats"><article><span>ALL PLUGINS</span><strong>${String(p.length).padStart(2,'0')}</strong><small>Saved plugins</small></article><article><span>WINDOWS PLUGINS</span><strong>${String(w).padStart(2,'0')}</strong><small>Windows records</small></article><article><span>MAC PLUGINS</span><strong>${String(m).padStart(2,'0')}</strong><small>Mac records</small></article></div>`;
+    const live=state.analytics?.liveVisitors||0, views=state.analytics?.pageViews24h||0;
+    return `<div class="intro"><div><div class="red-label">SYSTEM OVERVIEW</div><h3>COMMAND<br><em>CENTER.</em></h3><p>Manage your plugin library from one workspace.</p></div><div class="intro-mark">V<span>S</span></div></div><div class="stats"><article><span>ALL PLUGINS</span><strong>${String(p.length).padStart(2,'0')}</strong><small>Saved plugins</small></article><article><span>WINDOWS PLUGINS</span><strong>${String(w).padStart(2,'0')}</strong><small>Windows records</small></article><article><span>MAC PLUGINS</span><strong>${String(m).padStart(2,'0')}</strong><small>Mac records</small></article><article><span>LIVE VISITORS <i class="mini-pulse"></i></span><strong>${String(live).padStart(2,'0')}</strong><small>${views} page view${views===1?'':'s'} · last 24h</small></article></div>`;
   }
   function messages() { return `<div class="section-row"><div><div class="red-label">VISITOR REQUESTS</div><h3>MESSAGES<span>.</span></h3></div></div><div class="content-box">${state.requests.length ? state.requests.map(r=>`<div class="request-row"><div><strong>${esc(r.pluginName||r.name)}</strong><small>${esc(r.platform||'')} · ${esc(r.email||'')}</small></div></div>`).join('') : '<div class="empty">No plugin requests yet.</div>'}</div>`; }
   function emergencyForm(os) {
@@ -142,10 +143,12 @@
   });
   async function startOnline(){
     const login=$('#login'), app=$('#app'), form=$('#loginForm');
+    const refreshAnalytics=()=>setInterval(async()=>{if(!token||page!=='overview'||state.actor?.role==='moderator')return;try{state.analytics=(await api('/admin/analytics')).analytics;render()}catch(_){/* retain the latest visible count */}},15000);
     async function enter(){try{await loadOnline();render()}catch(_){app.classList.add('hidden');login.classList.remove('hidden')}}
-    if(token){await enter();if(!app.classList.contains('hidden'))return}
+    if(token){await enter();if(!app.classList.contains('hidden')){refreshAnalytics();return}}
     app.classList.add('hidden');login.classList.remove('hidden');
     form.addEventListener('submit',async event=>{event.preventDefault();const error=$('#loginError');error.textContent='';try{const data=await api('/login','POST',{username:$('#username').value.trim(),password:$('#password').value});token=data.token;sessionStorage.setItem('velostaff-api-token',token);await loadOnline();render();$('#password').value=''}catch(err){error.textContent=err.message}});
+    refreshAnalytics();
   }
   if(online)startOnline();else{load();render()}
 })();
