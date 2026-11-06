@@ -111,6 +111,7 @@ export async function onRequest(context) {
     if (method === 'POST' && path === '/login') {
       const data = await body(request);
       if (!env.ADMIN_PASSWORD || clean(data.username, 60).toLowerCase() !== 'admin' || data.password !== env.ADMIN_PASSWORD) return fail('Invalid credentials', 401);
+      if (!env.AUTH_SECRET) return json({ error: 'Admin login is not configured yet. Add AUTH_SECRET to the VeloStaff API Worker secrets.' }, 503);
       return json({ token: await token(env), role: 'admin', name: 'Admin' });
     }
     if (method === 'POST' && path === '/requests') {
