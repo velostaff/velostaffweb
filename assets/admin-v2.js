@@ -3,7 +3,7 @@
   const $ = s => document.querySelector(s);
   const key = 'velostaff-direct-admin-v3';
   const backup = window.KV_CATALOG || {plugins: [], settings: {}};
-  let state, page = 'overview', editor = null, emergencyEditor = null;
+  let state, page = 'overview', editor = null, emergencyEditor = null, analyticsPeriod = 'day';
   const online = location.protocol !== 'file:';
   let token = sessionStorage.getItem('velostaff-api-token') || '';
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -72,8 +72,9 @@
   function plugins() { return `<div class="section-row"><div><div class="red-label">ORGANISED LIBRARY</div><h3>PLUGINS<span>.</span></h3><p>Mac and Windows categories are separate. Editing one never changes the other.</p></div></div><div class="platform-columns">${panel('mac')}${panel('windows')}</div>`; }
   function overview() {
     const p = state.plugins, m = p.filter(x=>x.platforms?.mac?.url).length, w = p.filter(x=>x.platforms?.windows?.url).length;
-    const live=state.analytics?.liveVisitors||0, views=state.analytics?.pageViews24h||0;
-    return `<div class="intro"><div><div class="red-label">SYSTEM OVERVIEW</div><h3>COMMAND<br><em>CENTER.</em></h3><p>Manage your plugin library from one workspace.</p></div><div class="intro-mark">V<span>S</span></div></div><div class="stats"><article><span>ALL PLUGINS</span><strong>${String(p.length).padStart(2,'0')}</strong><small>Saved plugins</small></article><article><span>WINDOWS PLUGINS</span><strong>${String(w).padStart(2,'0')}</strong><small>Windows records</small></article><article><span>MAC PLUGINS</span><strong>${String(m).padStart(2,'0')}</strong><small>Mac records</small></article><article><span>LIVE VISITORS <i class="mini-pulse"></i></span><strong>${String(live).padStart(2,'0')}</strong><small>${views} page view${views===1?'':'s'} · last 24h</small></article></div>`;
+    const live=state.analytics?.liveVisitors||0, views=state.analytics?.pageViews24h||0, month=state.analytics?.views30d||0, series=state.analytics?.series||[], peak=Math.max(1,...series.map(item=>item.value||0));
+    const bars=series.map(item=>{const height=Math.max(4,Math.round((item.value/peak)*100));return `<div class="analytics-bar-wrap" style="--bar-height:${height}%" title="${esc(item.label)}: ${item.value} visit${item.value===1?'':'s'}"><span class="analytics-bar-value">${item.value}</span><i class="analytics-bar" style="height:${height}%"></i><small>${esc(item.label)}</small></div>`}).join('');
+    return `<div class="intro"><div><div class="red-label">SYSTEM OVERVIEW</div><h3>COMMAND<br><em>CENTER.</em></h3><p>Manage your plugin library from one workspace.</p></div><div class="intro-mark">V<span>S</span></div></div><div class="stats analytics-stats"><article><span>ALL PLUGINS</span><strong>${String(p.length).padStart(2,'0')}</strong><small>Saved plugins</small></article><article><span>WINDOWS PLUGINS</span><strong>${String(w).padStart(2,'0')}</strong><small>Windows records</small></article><article><span>MAC PLUGINS</span><strong>${String(m).padStart(2,'0')}</strong><small>Mac records</small></article><article><span>LIVE VISITORS <i class="mini-pulse"></i></span><strong>${String(live).padStart(2,'0')}</strong><small>Active in the last 90 seconds</small></article><article><span>LAST 30 DAYS</span><strong>${String(month).padStart(2,'0')}</strong><small>${views} page view${views===1?'':'s'} · last 24h</small></article></div><section class="analytics-board"><div class="analytics-chart-card"><div class="analytics-head"><div><span class="red-label">VISITOR HISTORY</span><h4>TRAFFIC OVER TIME</h4></div><select id="analyticsPeriod" aria-label="Analytics period"><option value="day" ${analyticsPeriod==='day'?'selected':''}>DAYS · 30</option><option value="week" ${analyticsPeriod==='week'?'selected':''}>WEEKS · 12</option><option value="month" ${analyticsPeriod==='month'?'selected':''}>MONTHS · 12</option><option value="year" ${analyticsPeriod==='year'?'selected':''}>YEARS · 5</option></select></div><div class="analytics-bars">${bars}</div></div><div class="live-orbit-card"><span class="red-label">LIVE NOW</span><div class="live-orbit" title="${live} visitors active right now"><div class="live-orbit-count">${String(live).padStart(2,'0')}<small>VISITORS</small></div><i class="orbit-dot one">${live}</i><i class="orbit-dot two">LIVE</i></div><p>Auto-updates every 15 seconds</p></div></section>`;
   }
   function messages() { return `<div class="section-row"><div><div class="red-label">VISITOR REQUESTS</div><h3>MESSAGES<span>.</span></h3></div></div><div class="content-box">${state.requests.length ? state.requests.map(r=>`<div class="request-row"><div><strong>${esc(r.pluginName||r.name)}</strong><small>${esc(r.platform||'')} · ${esc(r.email||'')}</small></div></div>`).join('') : '<div class="empty">No plugin requests yet.</div>'}</div>`; }
   function emergencyForm(os) {
@@ -96,6 +97,7 @@
     $('#app').innerHTML = `${nav()}<div class="admin-main"><header class="admin-top"><div><span class="red-label">VELO STAFF / ${esc(state.actor?.name||'ADMIN')}</span><h2>${page[0].toUpperCase()+page.slice(1)}</h2></div><button id="quickAdd" class="primary">+ ADD PLUGIN</button></header><div class="app-content">${view}</div><footer class="admin-footer"><span>VELO STAFF</span><span>${online?'D1 LIVE SYNC':'DIRECT BROWSER STORAGE'}</span></footer></div>`;
     $('#app').classList.remove('hidden'); $('#login').classList.add('hidden');
     $('#quickAdd').onclick=()=>{page='plugins';editor={os:'windows',plugin:null};render()};
+    if(page==='overview'&&$('#analyticsPeriod')) $('#analyticsPeriod').onchange=async e=>{analyticsPeriod=e.target.value;try{state.analytics=(await api(`/admin/analytics?period=${analyticsPeriod}`)).analytics;render()}catch(error){toast(error.message)}};
     if(page==='settings') $('#settingsForm').onsubmit=async e=>{e.preventDefault();const next={...state.settings,...Object.fromEntries(new FormData(e.currentTarget))};try{if(online){state.settings=(await api('/admin/settings','POST',next)).settings}else{state.settings=next;save()}toast('Settings saved')}catch(error){toast(error.message)}};
     if(page==='emergency') $('#toggleEmergency').onclick=async()=>{try{const enabled=!state.emergency.enabled;if(online){state.emergency=(await api('/admin/emergency/toggle','POST',{enabled})).emergency}else{state.emergency.enabled=enabled;save()}render();toast('Emergency Mode updated')}catch(error){toast(error.message)}};
     if(page==='security') {
@@ -143,7 +145,7 @@
   });
   async function startOnline(){
     const login=$('#login'), app=$('#app'), form=$('#loginForm');
-    const refreshAnalytics=()=>setInterval(async()=>{if(!token||page!=='overview'||state.actor?.role==='moderator')return;try{state.analytics=(await api('/admin/analytics')).analytics;render()}catch(_){/* retain the latest visible count */}},15000);
+    const refreshAnalytics=()=>setInterval(async()=>{if(!token||page!=='overview'||state.actor?.role==='moderator')return;try{state.analytics=(await api(`/admin/analytics?period=${analyticsPeriod}`)).analytics;render()}catch(_){/* retain the latest visible count */}},15000);
     async function enter(){try{await loadOnline();render()}catch(_){app.classList.add('hidden');login.classList.remove('hidden')}}
     if(token){await enter();if(!app.classList.contains('hidden')){refreshAnalytics();return}}
     app.classList.add('hidden');login.classList.remove('hidden');

@@ -3,10 +3,10 @@ const fail = (message, status = 400) => json({ error: message }, status);
 
 function clean(value, length = 300) { return String(value ?? '').trim().slice(0, length); }
 function validUrl(value) { try { const url = new URL(value); return /^https?:$/.test(url.protocol) ? url.href : ''; } catch { return ''; } }
-function initialState() { return { plugins: [], settings: { siteName: 'VELO STAFF', discordUrl: 'https://discord.gg/Yx5VaqPtFq', tagline: '', announcement: '' }, emergency: { enabled: false, plugins: [] }, requests: [], sessions: [], moderators: [], adminAccount: null, analytics: { presence: {}, pageViews: [] }, updatedAt: new Date().toISOString() }; }
+function initialState() { return { plugins: [], settings: { siteName: 'VELO STAFF', discordUrl: 'https://discord.gg/Yx5VaqPtFq', tagline: '', announcement: '' }, emergency: { enabled: false, plugins: [] }, requests: [], sessions: [], moderators: [], adminAccount: null, analytics: { presence: {}, pageViews: [], daily: {}, bucketMigrated: false }, updatedAt: new Date().toISOString() }; }
 async function database(env) {
   if (!env.VELO_DB) throw new Error('VELO_DB D1 binding is not configured');
-  await env.VELO_DB.exec('CREATE TABLE IF NOT EXISTS velostaff_state (id TEXT PRIMARY KEY, data TEXT NOT NULL)');
+  await env.VELO_DB.exec('CREATE TABLE IF NOT EXISTS velostaff_state (id TEXT PRIMARY KEY, data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS velostaff_visitors (visitor_id TEXT PRIMARY KEY, last_seen INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS velostaff_pageviews (id INTEGER PRIMARY KEY AUTOINCREMENT, visited_at INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS idx_velostaff_visitors_seen ON velostaff_visitors(last_seen); CREATE INDEX IF NOT EXISTS idx_velostaff_pageviews_at ON velostaff_pageviews(visited_at);');
   return env.VELO_DB;
 }
 async function persist(db, doc) { await db.prepare('INSERT INTO velostaff_state (id, data) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data').bind('main', JSON.stringify(doc)).run(); }
@@ -16,12 +16,29 @@ async function stateDoc(db) {
   const doc = initialState(); await persist(db, doc); return doc;
 }
 function publicState(doc) { return { plugins: doc.emergency?.enabled ? (doc.emergency.plugins || []) : (doc.plugins || []), settings: doc.settings || {}, emergency: !!doc.emergency?.enabled }; }
-function analyticsSummary(doc) {
-  const analytics = doc.analytics || { presence: {}, pageViews: [] }, now = Date.now(), activeSince = now - 90 * 1000, daySince = now - 24 * 60 * 60 * 1000;
-  analytics.presence ??= {}; analytics.pageViews ??= [];
-  for (const [id, seenAt] of Object.entries(analytics.presence)) if (seenAt < activeSince) delete analytics.presence[id];
-  analytics.pageViews = analytics.pageViews.filter(item => item.at > daySince).slice(-5000);
-  return { liveVisitors: Object.keys(analytics.presence).length, pageViews24h: analytics.pageViews.length };
+function dateKey(value) { return new Date(value).toISOString().slice(0, 10); }
+function analyticsSeries(analytics, period) {
+  const now = new Date(), sumDays = (start, days) => {
+    let value = 0;
+    for (let offset = 0; offset < days; offset++) { const day = new Date(start); day.setUTCDate(day.getUTCDate() + offset); value += analytics.daily[dateKey(day)] || 0; }
+    return value;
+  };
+  if (period === 'week') return Array.from({ length: 12 }, (_, index) => { const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - (11 - index) * 7 - 6)); return { label: start.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' }), value: sumDays(start, 7) }; });
+  if (period === 'month') return Array.from({ length: 12 }, (_, index) => { const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - (11 - index), 1)), end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1)); return { label: start.toLocaleDateString('en-GB', { month: 'short', timeZone: 'UTC' }), value: sumDays(start, Math.round((end - start) / 86400000)) }; });
+  if (period === 'year') return Array.from({ length: 5 }, (_, index) => { const year = now.getUTCFullYear() - (4 - index), start = new Date(Date.UTC(year, 0, 1)), end = new Date(Date.UTC(year + 1, 0, 1)); return { label: String(year), value: sumDays(start, Math.round((end - start) / 86400000)) }; });
+  return Array.from({ length: 30 }, (_, index) => { const day = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - (29 - index))); return { label: String(day.getUTCDate()), value: analytics.daily[dateKey(day)] || 0 }; });
+}
+async function analyticsSummary(db, period = 'day') {
+  const now = Date.now(), activeSince = now - 90 * 1000, historySince = Date.UTC(new Date().getUTCFullYear() - 4, 0, 1);
+  await db.prepare('DELETE FROM velostaff_visitors WHERE last_seen < ?').bind(activeSince).run();
+  const [liveRow, viewRows] = await Promise.all([
+    db.prepare('SELECT COUNT(*) AS total FROM velostaff_visitors WHERE last_seen >= ?').bind(activeSince).first(),
+    db.prepare('SELECT visited_at FROM velostaff_pageviews WHERE visited_at >= ? ORDER BY visited_at ASC').bind(historySince).all()
+  ]);
+  const visits = viewRows.results || [], analytics = { daily: {} };
+  for (const visit of visits) { const key = dateKey(visit.visited_at); analytics.daily[key] = (analytics.daily[key] || 0) + 1; }
+  const recentDays = analyticsSeries(analytics, 'day'), series = analyticsSeries(analytics, period), daySince = now - 86400000;
+  return { liveVisitors: Number(liveRow?.total || 0), pageViews24h: visits.filter(item => item.visited_at >= daySince).length, views30d: recentDays.reduce((sum, item) => sum + item.value, 0), period, series };
 }
 async function passwordRecord(password) {
   const salt = crypto.randomUUID();
@@ -73,10 +90,10 @@ export async function onRequest(context) {
     if (method === 'POST' && path === '/track') {
       const data = await body(request), visitorId = clean(data.visitorId, 80);
       if (!/^[a-z0-9-]{16,80}$/i.test(visitorId)) return fail('Invalid visitor');
-      const now = Date.now(); doc.analytics ??= { presence: {}, pageViews: [] }; doc.analytics.presence ??= {}; doc.analytics.pageViews ??= [];
-      doc.analytics.presence[visitorId] = now;
-      if (data.event === 'pageview') doc.analytics.pageViews.push({ at: now });
-      const analytics = analyticsSummary(doc); await persist(db, doc); return json({ ok: true, analytics });
+      const now = Date.now();
+      await db.prepare('INSERT INTO velostaff_visitors (visitor_id, last_seen) VALUES (?, ?) ON CONFLICT(visitor_id) DO UPDATE SET last_seen = excluded.last_seen').bind(visitorId, now).run();
+      if (data.event === 'pageview') await db.prepare('INSERT INTO velostaff_pageviews (visited_at) VALUES (?)').bind(now).run();
+      return json({ ok: true, analytics: await analyticsSummary(db) });
     }
     if (method === 'POST' && path === '/login') {
       const data = await body(request);
@@ -97,8 +114,8 @@ export async function onRequest(context) {
     const actor = authorised(request, doc);
     if (!actor) return fail('Sign in required', 401);
     const isAdmin = actor.role === 'admin';
-    if (method === 'GET' && path === '/admin/bootstrap') return json({ plugins: doc.plugins, settings: doc.settings, emergency: doc.emergency, requests: doc.requests, moderators: isAdmin ? doc.moderators : [], actor: { role: actor.role, name: actor.username }, analytics: analyticsSummary(doc) });
-    if (method === 'GET' && path === '/admin/analytics') { if (!isAdmin) return fail('Admin permission required', 403); return json({ analytics: analyticsSummary(doc) }); }
+    if (method === 'GET' && path === '/admin/bootstrap') return json({ plugins: doc.plugins, settings: doc.settings, emergency: doc.emergency, requests: doc.requests, moderators: isAdmin ? doc.moderators : [], actor: { role: actor.role, name: actor.username }, analytics: await analyticsSummary(db) });
+    if (method === 'GET' && path === '/admin/analytics') { if (!isAdmin) return fail('Admin permission required', 403); const period = new URL(request.url).searchParams.get('period') || 'day'; return json({ analytics: await analyticsSummary(db, ['day','week','month','year'].includes(period) ? period : 'day') }); }
     if (method === 'POST' && path === '/admin/plugins') { const plugin = normalPlugin(await body(request)); doc.plugins.unshift(plugin); doc.updatedAt = new Date().toISOString(); await persist(db, doc); return json({ plugin }, 201); }
     const pluginMatch = path.match(/^\/admin\/plugins\/([\w-]+)$/);
     if (pluginMatch && method === 'PUT') { const index = doc.plugins.findIndex(p => p.id === pluginMatch[1]); if (index < 0) return fail('Plugin not found', 404); doc.plugins[index] = normalPlugin(await body(request), doc.plugins[index]); doc.updatedAt = new Date().toISOString(); await persist(db, doc); return json({ plugin: doc.plugins[index] }); }

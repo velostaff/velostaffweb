@@ -67,9 +67,9 @@
   requestAnimationFrame(frame);
  }
  requestAnimationFrame(frame);
- const visitorKey='velostaff-visitor-id';let visitorId=localStorage.getItem(visitorKey);if(!visitorId){visitorId=crypto.randomUUID?.()||String(Date.now())+Math.random().toString(36).slice(2);localStorage.setItem(visitorKey,visitorId)}
+ const visitorKey='velostaff-visitor-id';let visitorId=localStorage.getItem(visitorKey);if(!/^[a-z0-9-]{16,80}$/i.test(visitorId||'')){visitorId=crypto.randomUUID?.()||(Date.now().toString(36)+'-'+Math.random().toString(36).slice(2,18));localStorage.setItem(visitorKey,visitorId)}
  const track=event=>fetch('/api/track',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({event,visitorId}),keepalive:true}).catch(()=>{});
- if(location.protocol!=='file:'){track('pageview');setInterval(()=>{if(!document.hidden)track('heartbeat')},30000)}
+ if(location.protocol!=='file:'){track('pageview');setInterval(()=>{if(!document.hidden)track('heartbeat')},30000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)track('heartbeat')})}
  const feedbackToggle=$('#feedbackToggle'),feedbackForm=$('#feedbackForm');feedbackToggle.addEventListener('click',()=>feedbackForm.classList.toggle('hidden'));feedbackForm.addEventListener('submit',async e=>{e.preventDefault();const payload={pluginName:$('#feedbackPlugin').value.trim(),platform:$('#feedbackPlatform').value,email:$('#feedbackEmail').value.trim(),name:$('#feedbackName').value.trim(),message:$('#feedbackMessage').value.trim(),notify:$('#feedbackNotify').checked};try{if(!payload.pluginName)throw Error('Enter the plugin name');if(location.protocol==='file:'||window.KV_MODE!=='online')throw Error('Requests need the live Velostaff server');const r=await fetch('/api/requests',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});if(!r.ok)throw Error((await r.json()).error||'Could not send request');feedbackForm.reset();feedbackForm.classList.add('hidden');toast('Request sent — thank you!')}catch(err){toast(err.message||'Could not send request. Please try again.')}});
  document.getElementById('year').textContent=new Date().getFullYear();applySettings();show();
 })();
