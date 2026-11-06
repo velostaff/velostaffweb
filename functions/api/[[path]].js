@@ -94,15 +94,6 @@ function normalPlugin(data, old = {}) {
 
 export async function onRequest(context) {
   const { request, env, params } = context;
-  // Pages forwards to the dedicated API Worker.  Never forward again when this
-  // same handler is already running inside that Worker, otherwise it recurses.
-  const requestOrigin = new URL(request.url).origin;
-  const workerOrigin = env.API_WORKER_URL ? new URL(env.API_WORKER_URL).origin : '';
-  if (env.API_WORKER_URL && requestOrigin !== workerOrigin) {
-    const source = new URL(request.url);
-    const target = new URL(source.pathname + source.search, env.API_WORKER_URL);
-    return fetch(new Request(target, request));
-  }
   const method = request.method.toUpperCase();
   const part = Array.isArray(params.path) ? params.path.join('/') : (params.path || '');
   const path = '/' + part;
