@@ -115,6 +115,12 @@ export async function onRequest(context) {
     if (!actor) return fail('Sign in required', 401);
     const isAdmin = actor.role === 'admin';
     if (method === 'GET' && path === '/admin/bootstrap') return json({ plugins: doc.plugins, settings: doc.settings, emergency: doc.emergency, requests: doc.requests, moderators: isAdmin ? doc.moderators : [], actor: { role: actor.role, name: actor.username }, analytics: await analyticsSummary(db) });
+    if (method === 'DELETE' && path === '/admin/requests') {
+      const data = await body(request), ids = Array.isArray(data.ids) ? data.ids.map(id => clean(id, 80)).filter(Boolean) : [];
+      if (!data.all && !ids.length) return fail('Select at least one message');
+      doc.requests = data.all ? [] : doc.requests.filter(requestItem => !ids.includes(requestItem.id));
+      doc.updatedAt = new Date().toISOString(); await persist(db, doc); return json({ requests: doc.requests });
+    }
     if (method === 'GET' && path === '/admin/analytics') { if (!isAdmin) return fail('Admin permission required', 403); const period = new URL(request.url).searchParams.get('period') || 'day'; return json({ analytics: await analyticsSummary(db, ['day','week','month','year'].includes(period) ? period : 'day') }); }
     if (method === 'POST' && path === '/admin/plugins') { const plugin = normalPlugin(await body(request)); doc.plugins.unshift(plugin); doc.updatedAt = new Date().toISOString(); await persist(db, doc); return json({ plugin }, 201); }
     const pluginMatch = path.match(/^\/admin\/plugins\/([\w-]+)$/);

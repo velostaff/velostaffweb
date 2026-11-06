@@ -76,7 +76,10 @@
     const bars=series.map(item=>{const height=Math.max(4,Math.round((item.value/peak)*100));return `<div class="analytics-bar-wrap" style="--bar-height:${height}%" title="${esc(item.label)}: ${item.value} visit${item.value===1?'':'s'}"><span class="analytics-bar-value">${item.value}</span><i class="analytics-bar" style="height:${height}%"></i><small>${esc(item.label)}</small></div>`}).join('');
     return `<div class="intro"><div><div class="red-label">SYSTEM OVERVIEW</div><h3>COMMAND<br><em>CENTER.</em></h3><p>Manage your plugin library from one workspace.</p></div><div class="intro-mark">V<span>S</span></div></div><div class="stats analytics-stats"><article><span>ALL PLUGINS</span><strong>${String(p.length).padStart(2,'0')}</strong><small>Saved plugins</small></article><article><span>WINDOWS PLUGINS</span><strong>${String(w).padStart(2,'0')}</strong><small>Windows records</small></article><article><span>MAC PLUGINS</span><strong>${String(m).padStart(2,'0')}</strong><small>Mac records</small></article><article><span>LIVE VISITORS <i class="mini-pulse"></i></span><strong>${String(live).padStart(2,'0')}</strong><small>Active in the last 90 seconds</small></article><article><span>LAST 30 DAYS</span><strong>${String(month).padStart(2,'0')}</strong><small>${views} page view${views===1?'':'s'} · last 24h</small></article></div><section class="analytics-board"><div class="analytics-chart-card"><div class="analytics-head"><div><span class="red-label">VISITOR HISTORY</span><h4>TRAFFIC OVER TIME</h4></div><select id="analyticsPeriod" aria-label="Analytics period"><option value="day" ${analyticsPeriod==='day'?'selected':''}>DAYS · 30</option><option value="week" ${analyticsPeriod==='week'?'selected':''}>WEEKS · 12</option><option value="month" ${analyticsPeriod==='month'?'selected':''}>MONTHS · 12</option><option value="year" ${analyticsPeriod==='year'?'selected':''}>YEARS · 5</option></select></div><div class="analytics-bars">${bars}</div></div><div class="live-orbit-card"><span class="red-label">LIVE NOW</span><div class="live-orbit" title="${live} visitors active right now"><div class="live-orbit-count">${String(live).padStart(2,'0')}<small>VISITORS</small></div><i class="orbit-dot one">${live}</i><i class="orbit-dot two">LIVE</i></div><p>Auto-updates every 15 seconds</p></div></section>`;
   }
-  function messages() { return `<div class="section-row"><div><div class="red-label">VISITOR REQUESTS</div><h3>MESSAGES<span>.</span></h3></div></div><div class="content-box">${state.requests.length ? state.requests.map(r=>`<div class="request-row"><div><strong>${esc(r.pluginName||r.name)}</strong><small>${esc(r.platform||'')} · ${esc(r.email||'')}</small></div></div>`).join('') : '<div class="empty">No plugin requests yet.</div>'}</div>`; }
+  function messages() {
+    const rows=state.requests.map(r=>`<article class="message-row"><label class="message-check" title="Select message"><input type="checkbox" data-request-select value="${esc(r.id)}"><i></i></label><div class="message-copy"><strong>${esc(r.pluginName||r.name||'Untitled request')}</strong><small>${esc(r.platform||'')} ${r.email?`· ${esc(r.email)}`:''}${r.name?` · ${esc(r.name)}`:''}</small>${r.message?`<p>${esc(r.message)}</p>`:''}</div><time>${r.createdAt?esc(new Date(r.createdAt).toLocaleString()):''}</time><button class="table-action danger" type="button" data-delete-request="${esc(r.id)}">DELETE</button></article>`).join('');
+    return `<div class="section-row"><div><div class="red-label">VISITOR REQUESTS</div><h3>MESSAGES<span>.</span></h3><p>${state.requests.length} saved request${state.requests.length===1?'':'s'}.</p></div></div><section class="content-box messages-box">${state.requests.length?`<div class="message-toolbar"><label class="select-all"><input id="selectAllRequests" type="checkbox"> SELECT ALL</label><span id="selectedRequestCount">0 SELECTED</span><button id="deleteSelectedRequests" class="secondary compact" type="button" disabled>DELETE SELECTED</button><button id="deleteAllRequests" class="table-action danger" type="button">DELETE ALL</button></div><div class="message-list">${rows}</div>`:'<div class="empty">No plugin requests yet.</div>'}</section>`;
+  }
   function emergencyForm(os) {
     if (!emergencyEditor || emergencyEditor.os !== os) return '';
     const p=emergencyEditor.plugin, d=p.platforms[os]||{};
@@ -98,12 +101,29 @@
     $('#app').classList.remove('hidden'); $('#login').classList.add('hidden');
     $('#quickAdd').onclick=()=>{page='plugins';editor={os:'windows',plugin:null};render()};
     if(page==='overview'&&$('#analyticsPeriod')) $('#analyticsPeriod').onchange=async e=>{analyticsPeriod=e.target.value;try{state.analytics=(await api(`/admin/analytics?period=${analyticsPeriod}`)).analytics;render()}catch(error){toast(error.message)}};
+    if(page==='messages'&&state.requests.length){
+      const boxes=[...document.querySelectorAll('[data-request-select]')], all=$('#selectAllRequests'), selected=$('#selectedRequestCount'), removeSelected=$('#deleteSelectedRequests');
+      const syncSelection=()=>{const count=boxes.filter(box=>box.checked).length;selected.textContent=`${count} SELECTED`;removeSelected.disabled=!count;all.checked=count===boxes.length;all.indeterminate=count>0&&count<boxes.length};
+      all.onchange=()=>{boxes.forEach(box=>box.checked=all.checked);syncSelection()};boxes.forEach(box=>box.onchange=syncSelection);
+      removeSelected.onclick=()=>deleteRequests(boxes.filter(box=>box.checked).map(box=>box.value),false);
+      $('#deleteAllRequests').onclick=()=>deleteRequests([],true);
+      document.querySelectorAll('[data-delete-request]').forEach(button=>button.onclick=()=>deleteRequests([button.dataset.deleteRequest],false));
+    }
     if(page==='settings') $('#settingsForm').onsubmit=async e=>{e.preventDefault();const next={...state.settings,...Object.fromEntries(new FormData(e.currentTarget))};try{if(online){state.settings=(await api('/admin/settings','POST',next)).settings}else{state.settings=next;save()}toast('Settings saved')}catch(error){toast(error.message)}};
     if(page==='emergency') $('#toggleEmergency').onclick=async()=>{try{const enabled=!state.emergency.enabled;if(online){state.emergency=(await api('/admin/emergency/toggle','POST',{enabled})).emergency}else{state.emergency.enabled=enabled;save()}render();toast('Emergency Mode updated')}catch(error){toast(error.message)}};
     if(page==='security') {
       $('#adminPasswordForm').onsubmit=async e=>{e.preventDefault();try{await api('/admin/security/admin-password','POST',{password:new FormData(e.currentTarget).get('password')});e.currentTarget.reset();toast('Admin password updated')}catch(error){toast(error.message)}};
       $('#moderatorForm').onsubmit=async e=>{e.preventDefault();try{const data=await api('/admin/moderators','POST',Object.fromEntries(new FormData(e.currentTarget)));state.moderators=data.moderators||[];render();toast('Moderator created')}catch(error){toast(error.message)}};
     }
+  }
+  async function deleteRequests(ids, all) {
+    const count=all?state.requests.length:ids.length;if(!count)return;
+    if(!confirm(all?`Delete all ${count} messages permanently?`:`Delete ${count} selected message${count===1?'':'s'} permanently?`))return;
+    try{
+      if(online){const data=await api('/admin/requests','DELETE',{ids,all});state.requests=data.requests||[]}
+      else{state.requests=all?[]:state.requests.filter(request=>!ids.includes(request.id));save()}
+      render();toast(`${count} message${count===1?'':'s'} deleted`)
+    }catch(error){toast(error.message)}
   }
   $('#app').addEventListener('click', e => {
     const pageBtn=e.target.closest('[data-page]');
