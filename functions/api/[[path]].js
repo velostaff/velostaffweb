@@ -46,6 +46,16 @@ function normalPlugin(data, old = {}) {
   if (!mac.url && !windows.url) throw new Error('At least one download link is required');
   return { ...old, id: old.id || crypto.randomUUID(), title: clean(data.title, 120), version: clean(data.version || '1.0', 40), description: clean(data.description, 1200), category: clean(data.category || old.category || 'General', 80), platformCategories: { mac: clean(data.platformCategories?.mac || old.platformCategories?.mac || data.category || 'General', 80), windows: clean(data.platformCategories?.windows || old.platformCategories?.windows || data.category || 'General', 80) }, platforms: { mac, windows }, updatedAt: new Date().toISOString() };
 }
+function emergencyPlugin(data) {
+  const platform = key => {
+    const value = data.platforms?.[key] || {};
+    return { url: validUrl(value.url || ''), alternatives: (value.alternatives || []).map(validUrl).filter(Boolean) };
+  };
+  const mac = platform('mac'), windows = platform('windows');
+  if (!clean(data.title, 120)) throw new Error('Plugin name is required');
+  if (!mac.url && !windows.url) throw new Error('At least one download link is required');
+  return { id: crypto.randomUUID(), title: clean(data.title, 120), version: clean(data.version || '1.0', 40), description: clean(data.description, 1200), platforms: { mac, windows }, createdAt: new Date().toISOString() };
+}
 
 export async function onRequest(context) {
   const { request, env, params } = context;
@@ -78,6 +88,15 @@ export async function onRequest(context) {
     if (pluginMatch && method === 'PUT') { const index = doc.plugins.findIndex(p => p.id === pluginMatch[1]); if (index < 0) return fail('Plugin not found', 404); doc.plugins[index] = normalPlugin(await body(request), doc.plugins[index]); doc.updatedAt = new Date().toISOString(); await persist(db, doc); return json({ plugin: doc.plugins[index] }); }
     if (pluginMatch && method === 'DELETE') { if (!isAdmin) return fail('Admin permission required', 403); doc.plugins = doc.plugins.filter(p => p.id !== pluginMatch[1]); doc.updatedAt = new Date().toISOString(); await persist(db, doc); return json({ ok: true }); }
     if (method === 'POST' && path === '/admin/emergency/toggle') { if (!isAdmin) return fail('Admin permission required', 403); doc.emergency.enabled = !!(await body(request)).enabled; doc.updatedAt = new Date().toISOString(); await persist(db, doc); return json({ emergency: doc.emergency }); }
+    if (method === 'POST' && path === '/admin/emergency/plugins') {
+      if (!isAdmin) return fail('Admin permission required', 403);
+      const plugin = emergencyPlugin(await body(request)); doc.emergency.plugins.unshift(plugin); doc.updatedAt = new Date().toISOString(); await persist(db, doc); return json({ plugin }, 201);
+    }
+    const emergencyPluginMatch = path.match(/^\/admin\/emergency\/plugins\/([\w-]+)$/);
+    if (emergencyPluginMatch && method === 'DELETE') {
+      if (!isAdmin) return fail('Admin permission required', 403);
+      doc.emergency.plugins = doc.emergency.plugins.filter(plugin => plugin.id !== emergencyPluginMatch[1]); doc.updatedAt = new Date().toISOString(); await persist(db, doc); return json({ ok: true });
+    }
     if (method === 'POST' && path === '/admin/settings') { if (!isAdmin) return fail('Admin permission required', 403); const data = await body(request); doc.settings = { ...doc.settings, siteName: clean(data.siteName, 100) || 'VELO STAFF', discordUrl: validUrl(data.discordUrl || doc.settings.discordUrl), tagline: clean(data.tagline, 260), announcement: clean(data.announcement, 120) }; doc.updatedAt = new Date().toISOString(); await persist(db, doc); return json({ settings: doc.settings }); }
     if (method === 'POST' && path === '/admin/security/admin-password') {
       if (!isAdmin) return fail('Admin permission required', 403);

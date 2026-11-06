@@ -3,7 +3,7 @@
   const $ = s => document.querySelector(s);
   const key = 'velostaff-direct-admin-v3';
   const backup = window.KV_CATALOG || {plugins: [], settings: {}};
-  let state, page = 'overview', editor = null;
+  let state, page = 'overview', editor = null, emergencyEditor = null;
   const online = location.protocol !== 'file:';
   let token = sessionStorage.getItem('velostaff-api-token') || '';
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -75,7 +75,16 @@
     return `<div class="intro"><div><div class="red-label">SYSTEM OVERVIEW</div><h3>COMMAND<br><em>CENTER.</em></h3><p>Manage your plugin library from one workspace.</p></div><div class="intro-mark">V<span>S</span></div></div><div class="stats"><article><span>ALL PLUGINS</span><strong>${String(p.length).padStart(2,'0')}</strong><small>Saved plugins</small></article><article><span>WINDOWS PLUGINS</span><strong>${String(w).padStart(2,'0')}</strong><small>Windows records</small></article><article><span>MAC PLUGINS</span><strong>${String(m).padStart(2,'0')}</strong><small>Mac records</small></article></div>`;
   }
   function messages() { return `<div class="section-row"><div><div class="red-label">VISITOR REQUESTS</div><h3>MESSAGES<span>.</span></h3></div></div><div class="content-box">${state.requests.length ? state.requests.map(r=>`<div class="request-row"><div><strong>${esc(r.pluginName||r.name)}</strong><small>${esc(r.platform||'')} · ${esc(r.email||'')}</small></div></div>`).join('') : '<div class="empty">No plugin requests yet.</div>'}</div>`; }
-  function emergency() { const e=state.emergency; return `<div class="section-row"><div><div class="red-label">ADMIN ONLY</div><h3>EMERGENCY<span>.</span></h3></div></div><div class="danger-box"><div class="red-label">CURRENT MODE</div><div class="emergency-state">${e.enabled?'ON':'OFF'}</div><p>Normal plugins are hidden only while this mode is active. Emergency plugins remain available.</p><button id="toggleEmergency" class="primary">${e.enabled?'DEACTIVATE':'ACTIVATE'} EMERGENCY MODE</button></div>`; }
+  function emergencyForm(os) {
+    if (!emergencyEditor || emergencyEditor.os !== os) return '';
+    const p=emergencyEditor.plugin, d=p.platforms[os]||{};
+    return `<form class="inline-plugin-form" data-emergency-form data-os="${os}"><div class="inline-head">ADD ${title(os)} EMERGENCY PLUGIN</div><div class="inline-fields"><label>PLUGIN NAME<input name="title" required value="${esc(p.title)}"></label><label>VERSION<input name="version" required value="${esc(p.version||'1.0')}"></label><label>PRIMARY LINK<input name="url" type="url" required value="${esc(d.url||'')}"></label></div><label class="alt-title">ALTERNATIVE LINKS</label><div class="alternatives">${(d.alternatives||[]).map(alt).join('')}</div><button class="secondary compact" type="button" data-emergency-add>+ ADD MORE</button><button class="primary inline-save">ADD ${title(os)} EMERGENCY PLUGIN</button></form>`;
+  }
+  function emergencyPanel(os) {
+    const items=(state.emergency.plugins||[]).filter(p=>p.platforms?.[os]?.url), links=items.reduce((sum,p)=>sum+1+(p.platforms[os].alternatives||[]).filter(Boolean).length,0);
+    return `<section class="platform-card emergency-card"><div class="platform-title"><h4>${title(os)} EMERGENCY PLUGINS</h4><span>${links} LINK${links===1?'':'S'}</span></div><button class="primary" data-emergency-start="${os}">+ ADD ${title(os)} EMERGENCY PLUGIN</button>${emergencyForm(os)}<div class="plugin-list">${items.length?items.map(p=>`<div class="plugin-row"><div><strong>${esc(p.title)}</strong><small>v${esc(p.version||'1.0')} · ${1+(p.platforms[os].alternatives||[]).filter(Boolean).length} links</small></div><button class="table-action danger" data-emergency-delete="${esc(p.id)}">DELETE</button></div>`).join(''):'<div class="empty">No emergency plugins</div>'}</div></section>`;
+  }
+  function emergency() { const e=state.emergency; return `<div class="section-row"><div><div class="red-label">ADMIN ONLY</div><h3>EMERGENCY<span>.</span></h3></div></div><div class="danger-box"><div class="red-label">CURRENT MODE</div><div class="emergency-state">${e.enabled?'ON':'OFF'}</div><p>Normal plugins are hidden only while this mode is active. Emergency plugins remain available.</p><button id="toggleEmergency" class="primary">${e.enabled?'DEACTIVATE':'ACTIVATE'} EMERGENCY MODE</button></div><div class="platform-columns emergency-panels">${emergencyPanel('mac')}${emergencyPanel('windows')}</div>`; }
   function settings() { const s=state.settings; return `<div class="section-row"><div><div class="red-label">PUBLIC WEBSITE</div><h3>SETTINGS<span>.</span></h3></div></div><form id="settingsForm" class="content-box admin-form"><label>SITE NAME<input name="siteName" value="${esc(s.siteName||'VELO STAFF')}"></label><label>DISCORD LINK<input name="discordUrl" value="${esc(s.discordUrl||'')}"></label><label>TAGLINE<input name="tagline" value="${esc(s.tagline||'')}"></label><label>HEADER ANNOUNCEMENT<input name="announcement" value="${esc(s.announcement||'')}"></label><button class="primary">SAVE SETTINGS</button></form>`; }
   function security() {
     const mods = state.moderators || [];
@@ -96,9 +105,12 @@
   $('#app').addEventListener('click', e => {
     const pageBtn=e.target.closest('[data-page]');
     if(pageBtn){page=pageBtn.dataset.page;editor=null;render();return}
-    const b=e.target.closest('[data-start],[data-add],[data-remove],[data-edit],[data-delete],[data-rename-category],[data-reset-mod],[data-delete-mod]');
+    const b=e.target.closest('[data-start],[data-add],[data-remove],[data-edit],[data-delete],[data-rename-category],[data-reset-mod],[data-delete-mod],[data-emergency-start],[data-emergency-add],[data-emergency-delete]');
     if(!b)return;
     if(b.dataset.start){editor={os:b.dataset.start,plugin:null};render();return}
+    if(b.dataset.emergencyStart){const os=b.dataset.emergencyStart;emergencyEditor={os,plugin:{title:'',version:'1.0',platforms:{mac:{},windows:{},[os]:{url:'',alternatives:[]}}}};render();return}
+    if(b.hasAttribute('data-emergency-add')){b.previousElementSibling.insertAdjacentHTML('beforeend',alt());return}
+    if(b.dataset.emergencyDelete){if(!confirm('Delete this emergency plugin?'))return;api(`/admin/emergency/plugins/${encodeURIComponent(b.dataset.emergencyDelete)}`,'DELETE').then(loadOnline).then(()=>{render();toast('Emergency plugin deleted')}).catch(error=>toast(error.message));return}
     if(b.hasAttribute('data-add')){b.previousElementSibling.insertAdjacentHTML('beforeend',alt());return}
     if(b.hasAttribute('data-remove')){b.closest('.link-row')?.remove();return}
     if(b.dataset.edit){editor={os:b.dataset.os,plugin:state.plugins.find(p=>p.id===b.dataset.edit)};render();return}
@@ -114,7 +126,13 @@
     }
   });
   $('#app').addEventListener('submit', async e => {
-    const f=e.target;if(!f.matches('[data-form]'))return;e.preventDefault();
+    const f=e.target;if(!f.matches('[data-form],[data-emergency-form]'))return;e.preventDefault();
+    if(f.matches('[data-emergency-form]')){
+      const os=f.dataset.os, fd=new FormData(f), p={title:fd.get('title').trim(),version:fd.get('version').trim(),description:'',platforms:{mac:{},windows:{}}};
+      p.platforms[os]={url:fd.get('url').trim(),alternatives:[...f.querySelectorAll('.alternatives input')].map(x=>x.value.trim()).filter(Boolean)};
+      try{await api('/admin/emergency/plugins','POST',p);await loadOnline();emergencyEditor=null;render();toast('Emergency plugin saved — live now')}catch(error){toast(error.message)}
+      return;
+    }
     const os=f.dataset.os, fd=new FormData(f), old=editor?.plugin;
     const p=old?structuredClone(old):{id:crypto.randomUUID(),platforms:{mac:{},windows:{}},createdAt:new Date().toISOString(),updatedBy:'Admin'};
     p.title=fd.get('pluginTitle').trim();p.version=fd.get('version').trim();p.description??='';
