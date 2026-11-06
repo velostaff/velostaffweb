@@ -2,3 +2,8 @@ name = "velostaffweb"
 compatibility_date = "2026-11-05"
 compatibility_flags = ["nodejs_compat"]
 pages_build_output_dir = "."
+
+[[d1_databases]]
+binding = "VELO_DB"
+database_name = "velostaff-data"
+database_id = "d7edb2c9-e512-4cf2-9cb7-64f0fa86a89f"
