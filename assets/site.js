@@ -26,10 +26,9 @@
  $('#categoryFilters').addEventListener('click',e=>{const btn=e.target.closest('[data-cat]');if(btn){category=btn.dataset.cat;show()}});
  $('#searchInput').addEventListener('input',e=>{query=e.target.value.trim().toLowerCase();show()});
  $('#pluginGrid').addEventListener('click',e=>{const b=e.target.closest('[data-id][data-os]');if(!b)return;const p=plugins.find(x=>String(x.id)===b.dataset.id);const os=b.dataset.os;let a=p?.platforms?.[os];if(!a)return;
-  const online=location.protocol!=='file:'&&window.KV_MODE==='online';
-  const linkIndex=Number(b.dataset.link||0),candidate=[a.url,...(a.alternatives||[])][linkIndex],link=online?`/api/plugins/${encodeURIComponent(p.id)}/download?platform=${os}&link=${linkIndex}`:validUrl(candidate);
-  if(!link){toast('This file requires the published Node.js server.');return}
-  const el=document.createElement('a');el.href=link;el.target=link.startsWith('http')?'_blank':'_self';el.rel='noopener noreferrer';document.body.appendChild(el);el.click();el.remove();toast('Download requested · '+p.title);
+  const linkIndex=Number(b.dataset.link||0),candidate=[a.url,...(a.alternatives||[])][linkIndex],link=validUrl(candidate);
+  if(!link){toast('This download link is unavailable.');return}
+  const el=document.createElement('a');el.href=link;el.target='_blank';el.rel='noopener noreferrer';document.body.appendChild(el);el.click();el.remove();toast('Opening download · '+p.title);
  });
  function applyState(data){if(!data||!Array.isArray(data.plugins))return;plugins=data.plugins;settings=data.settings||settings;document.body.classList.toggle('emergency-active',!!data.emergency);applySettings();show()}
  function applySettings(){const a=settings.accent;if(/^#[0-9a-fA-F]{6}$/.test(a||''))document.documentElement.style.setProperty('--red',a);if(settings.tagline)$('#heroSubtitle').textContent=settings.tagline;if(settings.announcement){$('#announcementLabel').textContent=settings.announcement;$('#announcementLabel').title=settings.announcement}if(settings.siteName){document.getElementById('brandName').textContent=settings.siteName;document.getElementById('footerBrand').textContent=settings.siteName;document.title=settings.siteName+' — Creator Tools'}if(validUrl(settings.discordUrl))$('#discordLink').href=settings.discordUrl;}
