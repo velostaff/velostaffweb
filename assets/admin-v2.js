@@ -19,12 +19,12 @@
   }
   async function loadOnline() {
     const data = await api('/admin/bootstrap');
-    state = { plugins:data.plugins || [], settings:data.settings || {}, emergency:data.emergency || {enabled:false,plugins:[]}, requests:data.requests || [] };
+    state = { plugins:data.plugins || [], settings:data.settings || {}, emergency:data.emergency || {enabled:false,plugins:[]}, requests:data.requests || [], moderators:data.moderators || [], actor:data.actor || {role:'admin',name:'Admin'} };
     state.plugins.forEach(p => { p.platformCategories ??= {}; p.platformCategories.mac ??= p.category || 'General'; p.platformCategories.windows ??= p.category || 'General'; });
   }
   function load() {
     try { state = JSON.parse(localStorage.getItem(key) || ''); } catch (_) {}
-    state ??= {plugins: backup.plugins || [], settings: backup.settings || {}, emergency: {enabled:false,plugins:[]}, requests:[]};
+    state ??= {plugins: backup.plugins || [], settings: backup.settings || {}, emergency: {enabled:false,plugins:[]}, requests:[], moderators:[], actor:{role:'admin',name:'Admin'}};
     state.plugins ??= []; state.requests ??= [];
     state.emergency ??= {enabled:false,plugins:[]}; state.emergency.plugins ??= [];
     // Old shared categories are copied once, then Mac and Windows stay independent.
@@ -40,12 +40,15 @@
   function cat(p, os) { return p.platformCategories?.[os] || p.category || 'General'; }
   function nav() {
     const links = [['overview','◇','OVERVIEW'],['plugins','▦','PLUGINS'],['messages','✉','MESSAGES'],['emergency','!','EMERGENCY'],['settings','◎','SETTINGS'],['security','⌘','SECURITY']];
-    return `<aside class="sidebar"><div class="side-brand"><div class="brand-square">VS</div><div>VELO STAFF<small>DIRECT HTML MODE</small></div></div><div class="sidebar-label">WORKSPACE</div><nav class="side-nav">${links.map(([id,i,n]) => `<button data-page="${id}" class="${page===id?'active':''}"><i>${i}</i>${n}</button>`).join('')}</nav><div class="side-spacer"></div><a class="outside-link" href="index.html" target="_blank">OPEN WEBSITE ↗</a></aside>`;
+    const isAdmin = state?.actor?.role !== 'moderator';
+    const visible = isAdmin ? links : links.filter(([id]) => ['plugins','messages'].includes(id));
+    return `<aside class="sidebar"><div class="side-brand"><div class="brand-square">VS</div><div>VELO STAFF<small>${isAdmin?'ADMIN ACCESS':'MODERATOR ACCESS'}</small></div></div><div class="sidebar-label">WORKSPACE</div><nav class="side-nav">${visible.map(([id,i,n]) => `<button data-page="${id}" class="${page===id?'active':''}"><i>${i}</i>${n}</button>`).join('')}</nav><div class="side-spacer"></div><a class="outside-link" href="index.html" target="_blank">OPEN WEBSITE ↗</a></aside>`;
   }
   function alt(v='') { return `<div class="link-row"><input type="url" value="${esc(v)}" placeholder="Alternative link"><button class="secondary compact" type="button" data-remove>REMOVE</button></div>`; }
   function pluginRow(p, os) {
     const n = 1 + (p.platforms?.[os]?.alternatives || []).filter(Boolean).length;
-    return `<div class="plugin-row"><div><strong>${esc(p.title)}</strong><small>v${esc(p.version||'1.0')} · ${n} link${n===1?'':'s'}</small></div><div><button class="table-action" data-edit="${esc(p.id)}" data-os="${os}">EDIT</button><button class="table-action danger" data-delete="${esc(p.id)}">DELETE</button></div></div>`;
+    const remove = state.actor?.role === 'moderator' ? '' : `<button class="table-action danger" data-delete="${esc(p.id)}">DELETE</button>`;
+    return `<div class="plugin-row"><div><strong>${esc(p.title)}</strong><small>v${esc(p.version||'1.0')} · ${n} link${n===1?'':'s'}</small></div><div><button class="table-action" data-edit="${esc(p.id)}" data-os="${os}">EDIT</button>${remove}</div></div>`;
   }
   function categories(os) {
     const names = [...new Set(state.plugins.filter(p => p.platforms?.[os]?.url).map(p => cat(p,os)))].sort((a,b)=>a.localeCompare(b));
@@ -74,25 +77,34 @@
   function messages() { return `<div class="section-row"><div><div class="red-label">VISITOR REQUESTS</div><h3>MESSAGES<span>.</span></h3></div></div><div class="content-box">${state.requests.length ? state.requests.map(r=>`<div class="request-row"><div><strong>${esc(r.pluginName||r.name)}</strong><small>${esc(r.platform||'')} · ${esc(r.email||'')}</small></div></div>`).join('') : '<div class="empty">No plugin requests yet.</div>'}</div>`; }
   function emergency() { const e=state.emergency; return `<div class="section-row"><div><div class="red-label">ADMIN ONLY</div><h3>EMERGENCY<span>.</span></h3></div></div><div class="danger-box"><div class="red-label">CURRENT MODE</div><div class="emergency-state">${e.enabled?'ON':'OFF'}</div><p>Normal plugins are hidden only while this mode is active. Emergency plugins remain available.</p><button id="toggleEmergency" class="primary">${e.enabled?'DEACTIVATE':'ACTIVATE'} EMERGENCY MODE</button></div>`; }
   function settings() { const s=state.settings; return `<div class="section-row"><div><div class="red-label">PUBLIC WEBSITE</div><h3>SETTINGS<span>.</span></h3></div></div><form id="settingsForm" class="content-box admin-form"><label>SITE NAME<input name="siteName" value="${esc(s.siteName||'VELO STAFF')}"></label><label>DISCORD LINK<input name="discordUrl" value="${esc(s.discordUrl||'')}"></label><label>TAGLINE<input name="tagline" value="${esc(s.tagline||'')}"></label><label>HEADER ANNOUNCEMENT<input name="announcement" value="${esc(s.announcement||'')}"></label><button class="primary">SAVE SETTINGS</button></form>`; }
-  function security() { return '<div class="section-row"><div><div class="red-label">SECURITY</div><h3>SECURITY<span>.</span></h3></div></div><div class="content-box"><h4>DIRECT HTML MODE</h4><p>Admin and moderator access can be configured here for this browser.</p></div>'; }
+  function security() {
+    const mods = state.moderators || [];
+    return `<div class="section-row"><div><div class="red-label">ADMIN ACCESS CONTROL</div><h3>SECURITY<span>.</span></h3><p>Create moderator accounts for Plugins and Messages only. Settings, Emergency and Security stay admin-only.</p></div></div><section class="content-box security-box"><h4>RESET ADMIN PASSWORD</h4><p>Set a new 8+ character admin password. Your Cloudflare emergency password remains a recovery login.</p><form id="adminPasswordForm" class="admin-form"><label>NEW ADMIN PASSWORD<input name="password" type="password" minlength="8" required autocomplete="new-password"></label><button class="primary">SAVE ADMIN PASSWORD</button></form></section><section class="content-box security-box"><h4>ADD MODERATOR</h4><form id="moderatorForm" class="admin-form two-col"><label>USERNAME<input name="username" required minlength="3" maxlength="40" placeholder="e.g. shivam"></label><label>PASSWORD<input name="password" type="password" minlength="8" required autocomplete="new-password"></label><button class="primary">CREATE MODERATOR</button></form><div class="plugin-list">${mods.length ? mods.map(m=>`<div class="plugin-row"><div><strong>${esc(m.username)}</strong><small>Moderator · Plugins + Messages only</small></div><div><button class="table-action" data-reset-mod="${esc(m.id)}">RESET PASSWORD</button><button class="table-action danger" data-delete-mod="${esc(m.id)}">REMOVE</button></div></div>`).join('') : '<div class="empty">No moderators created yet.</div>'}</div></section>`;
+  }
   function render() {
     const view={overview,plugins,messages,emergency,settings,security}[page]();
-    $('#app').innerHTML = `${nav()}<div class="admin-main"><header class="admin-top"><div><span class="red-label">VELO STAFF / MANAGEMENT</span><h2>${page[0].toUpperCase()+page.slice(1)}</h2></div><button id="quickAdd" class="primary">+ ADD PLUGIN</button></header><div class="app-content">${view}</div><footer class="admin-footer"><span>VELO STAFF</span><span>${online?'MONGODB LIVE SYNC':'DIRECT BROWSER STORAGE'}</span></footer></div>`;
+    $('#app').innerHTML = `${nav()}<div class="admin-main"><header class="admin-top"><div><span class="red-label">VELO STAFF / ${esc(state.actor?.name||'ADMIN')}</span><h2>${page[0].toUpperCase()+page.slice(1)}</h2></div><button id="quickAdd" class="primary">+ ADD PLUGIN</button></header><div class="app-content">${view}</div><footer class="admin-footer"><span>VELO STAFF</span><span>${online?'D1 LIVE SYNC':'DIRECT BROWSER STORAGE'}</span></footer></div>`;
     $('#app').classList.remove('hidden'); $('#login').classList.add('hidden');
     $('#quickAdd').onclick=()=>{page='plugins';editor={os:'windows',plugin:null};render()};
     if(page==='settings') $('#settingsForm').onsubmit=async e=>{e.preventDefault();const next={...state.settings,...Object.fromEntries(new FormData(e.currentTarget))};try{if(online){state.settings=(await api('/admin/settings','POST',next)).settings}else{state.settings=next;save()}toast('Settings saved')}catch(error){toast(error.message)}};
     if(page==='emergency') $('#toggleEmergency').onclick=async()=>{try{const enabled=!state.emergency.enabled;if(online){state.emergency=(await api('/admin/emergency/toggle','POST',{enabled})).emergency}else{state.emergency.enabled=enabled;save()}render();toast('Emergency Mode updated')}catch(error){toast(error.message)}};
+    if(page==='security') {
+      $('#adminPasswordForm').onsubmit=async e=>{e.preventDefault();try{await api('/admin/security/admin-password','POST',{password:new FormData(e.currentTarget).get('password')});e.currentTarget.reset();toast('Admin password updated')}catch(error){toast(error.message)}};
+      $('#moderatorForm').onsubmit=async e=>{e.preventDefault();try{const data=await api('/admin/moderators','POST',Object.fromEntries(new FormData(e.currentTarget)));state.moderators=data.moderators||[];render();toast('Moderator created')}catch(error){toast(error.message)}};
+    }
   }
   $('#app').addEventListener('click', e => {
     const pageBtn=e.target.closest('[data-page]');
     if(pageBtn){page=pageBtn.dataset.page;editor=null;render();return}
-    const b=e.target.closest('[data-start],[data-add],[data-remove],[data-edit],[data-delete],[data-rename-category]');
+    const b=e.target.closest('[data-start],[data-add],[data-remove],[data-edit],[data-delete],[data-rename-category],[data-reset-mod],[data-delete-mod]');
     if(!b)return;
     if(b.dataset.start){editor={os:b.dataset.start,plugin:null};render();return}
     if(b.hasAttribute('data-add')){b.previousElementSibling.insertAdjacentHTML('beforeend',alt());return}
     if(b.hasAttribute('data-remove')){b.closest('.link-row')?.remove();return}
     if(b.dataset.edit){editor={os:b.dataset.os,plugin:state.plugins.find(p=>p.id===b.dataset.edit)};render();return}
     if(b.dataset.delete){if(!confirm('Delete this plugin?'))return;if(online){api(`/admin/plugins/${encodeURIComponent(b.dataset.delete)}`,'DELETE').then(loadOnline).then(()=>{render();toast('Plugin deleted')}).catch(error=>toast(error.message))}else{state.plugins=state.plugins.filter(p=>p.id!==b.dataset.delete);save();render();toast('Plugin deleted')}return}
+    if(b.dataset.resetMod){const password=prompt('New moderator password (minimum 8 characters)');if(!password)return;if(password.length<8){toast('Password needs at least 8 characters');return}api(`/admin/moderators/${encodeURIComponent(b.dataset.resetMod)}`,'PUT',{password}).then(data=>{state.moderators=data.moderators||[];render();toast('Moderator password reset')}).catch(error=>toast(error.message));return}
+    if(b.dataset.deleteMod){if(!confirm('Remove this moderator?'))return;api(`/admin/moderators/${encodeURIComponent(b.dataset.deleteMod)}`,'DELETE').then(()=>{state.moderators=state.moderators.filter(m=>m.id!==b.dataset.deleteMod);render();toast('Moderator removed')}).catch(error=>toast(error.message));return}
     if(b.dataset.renameCategory){
       e.preventDefault();e.stopPropagation();
       const old=b.dataset.renameCategory, os=b.dataset.os, next=prompt(`Rename ${title(os)} category`,old)?.trim();
