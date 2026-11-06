@@ -1,7 +1,6 @@
 import { MongoClient } from 'mongodb';
 
 let client;
-const encoder = new TextEncoder();
 const json = (data, status = 200) => Response.json(data, { status, headers: { 'cache-control': 'no-store' } });
 const fail = (message, status = 400) => json({ error: message }, status);
 
@@ -51,21 +50,20 @@ function publicState(doc) {
     emergency: !!doc.emergency?.enabled
   };
 }
-async function sign(value, secret) {
-  const key = await crypto.subtle.importKey('raw', encoder.encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
-  const sig = await crypto.subtle.sign('HMAC', key, encoder.encode(value));
-  return btoa(String.fromCharCode(...new Uint8Array(sig))).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+function createSession(doc) {
+  const value = `${crypto.randomUUID()}${crypto.randomUUID()}`;
+  const now = Date.now();
+  const active = (doc.sessions || []).filter(session => session?.expiresAt > now);
+  active.push({ value, expiresAt: now + 1000 * 60 * 60 * 12 });
+  doc.sessions = active.slice(-20);
+  return value;
 }
-async function token(env) {
-  const payload = btoa(JSON.stringify({ role: 'admin', exp: Date.now() + 1000 * 60 * 60 * 12 })).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
-  return `${payload}.${await sign(payload, env.AUTH_SECRET)}`;
-}
-async function authorised(request, env) {
+function authorised(request, doc) {
   const raw = request.headers.get('authorization') || '';
-  const [payload, signature] = raw.replace(/^Bearer\s+/i, '').split('.');
-  if (!payload || !signature || !env.AUTH_SECRET) return false;
-  if (signature !== await sign(payload, env.AUTH_SECRET)) return false;
-  try { return JSON.parse(atob(payload.replaceAll('-', '+').replaceAll('_', '/'))).exp > Date.now(); } catch { return false; }
+  const value = raw.replace(/^Bearer\s+/i, '');
+  const now = Date.now();
+  doc.sessions = (doc.sessions || []).filter(session => session?.expiresAt > now);
+  return !!value && doc.sessions.some(session => session.value === value);
 }
 async function body(request) {
   try { return await request.json(); } catch { return {}; }
@@ -115,8 +113,9 @@ export async function onRequest(context) {
     if (method === 'POST' && path === '/login') {
       const data = await body(request);
       if (!env.ADMIN_PASSWORD || clean(data.username, 60).toLowerCase() !== 'admin' || data.password !== env.ADMIN_PASSWORD) return fail('Invalid credentials', 401);
-      if (!env.AUTH_SECRET) return json({ error: 'Admin login is not configured yet. Add AUTH_SECRET to the VeloStaff API Worker secrets.' }, 503);
-      return json({ token: await token(env), role: 'admin', name: 'Admin' });
+      const loginToken = createSession(doc);
+      await db.collection('state').replaceOne({ _id: 'main' }, doc);
+      return json({ token: loginToken, role: 'admin', name: 'Admin' });
     }
     if (method === 'POST' && path === '/requests') {
       const data = await body(request);
@@ -127,7 +126,7 @@ export async function onRequest(context) {
       await db.collection('state').replaceOne({ _id: 'main' }, doc);
       return json({ ok: true }, 201);
     }
-    if (!await authorised(request, env)) return fail('Sign in required', 401);
+    if (!authorised(request, doc)) return fail('Sign in required', 401);
     if (method === 'GET' && path === '/admin/bootstrap') return json({ plugins: doc.plugins, settings: doc.settings, emergency: doc.emergency, requests: doc.requests });
     if (method === 'POST' && path === '/admin/plugins') {
       const plugin = normalPlugin(await body(request));
