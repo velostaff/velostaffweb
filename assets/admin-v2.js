@@ -5,6 +5,12 @@
   const key = 'velostaff-direct-admin-v3';
   const backup = window.KV_CATALOG || {plugins: [], settings: {}};
   let state, page = 'overview', editor = null, emergencyEditor = null, analyticsPeriod = 'day', dragMode = false, dragging = null;
+  // Keep manual category collapse choices when add/edit triggers a re-render.
+  const collapsedCategoriesKey = 'velostaff-admin-collapsed-categories-v1';
+  let collapsedCategories = new Set();
+  try { collapsedCategories = new Set(JSON.parse(localStorage.getItem(collapsedCategoriesKey) || '[]')); } catch (_) {}
+  const categoryStateKey = (os, id) => `${os}:${id}`;
+  const saveCollapsedCategories = () => localStorage.setItem(collapsedCategoriesKey, JSON.stringify([...collapsedCategories]));
   const online = location.protocol !== 'file:';
   let token = sessionStorage.getItem('velostaff-api-token') || '';
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -78,7 +84,8 @@
     if (!names.length) return '<div class="empty">No plugins yet. Add your first plugin above.</div>';
     return names.map(name => {
       const items = state.plugins.filter(p => p.platforms?.[os]?.url && cat(p,os) === name);
-      return `<details class="plugin-category" open><summary><span>${esc(name)}</span><b>${items.length}</b><button class="category-pencil" type="button" title="Rename ${title(os)} category" data-rename-category="${esc(name)}" data-os="${os}">✎</button><i>⌄</i></summary>${items.map(p=>pluginRow(p,os)).join('')}</details>`;
+      const collapseKey=categoryStateKey(os,`legacy:${name}`);
+      return `<details class="plugin-category" data-collapse-key="${esc(collapseKey)}" ${collapsedCategories.has(collapseKey)?'':'open'}><summary><span>${esc(name)}</span><b>${items.length}</b><button class="category-pencil" type="button" title="Rename ${title(os)} category" data-rename-category="${esc(name)}" data-os="${os}">✎</button><i>⌄</i></summary>${items.map(p=>pluginRow(p,os)).join('')}</details>`;
     }).join('');
   }
   function categoriesV2(os) {
@@ -93,7 +100,8 @@
         const p=state.plugins.find(plugin=>plugin.id===item.id); return p?pluginRow(p,os,entry.id):'';
       }).join('');
       const actions=state.actor?.role==='moderator'?'':`<button class="table-action" type="button" data-add-spacing="${os}" data-parent="${esc(entry.id)}">+ GAP</button><button class="category-pencil" type="button" title="Rename ${title(os)} category" data-rename-category-id="${esc(entry.id)}" data-os="${os}">EDIT</button>`;
-      return `<details class="plugin-category" open data-layout-kind="category" data-layout-os="${os}" data-layout-id="${esc(entry.id)}"><summary><span>${esc(entry.name)}</span><b>${count}</b>${actions}<i>v</i></summary>${children}</details>`;
+      const collapseKey=categoryStateKey(os,entry.id);
+      return `<details class="plugin-category" data-collapse-key="${esc(collapseKey)}" ${collapsedCategories.has(collapseKey)?'':'open'} data-layout-kind="category" data-layout-os="${os}" data-layout-id="${esc(entry.id)}"><summary><span>${esc(entry.name)}</span><b>${count}</b>${actions}<i>v</i></summary>${children}</details>`;
     }).join('');
   }
   function form(os) {
@@ -176,6 +184,14 @@
     const view={overview,plugins,messages,emergency,settings,security}[page]();
     $('#app').innerHTML = `${nav()}<div class="admin-main"><header class="admin-top"><div><span class="red-label">VELO STAFF / ${esc(state.actor?.name||'ADMIN')}</span><h2>${page[0].toUpperCase()+page.slice(1)}</h2></div><button id="quickAdd" class="primary">+ ADD PLUGIN</button></header><div class="app-content">${view}</div><footer class="admin-footer"><span>VELO STAFF</span><span>${online?'D1 LIVE SYNC':'DIRECT BROWSER STORAGE'}</span></footer></div>`;
     $('#app').classList.remove('hidden'); $('#login').classList.add('hidden');
+    document.querySelectorAll('details.plugin-category[data-collapse-key]').forEach(details=>{
+      details.addEventListener('toggle',()=>{
+        const collapseKey=details.dataset.collapseKey;
+        if(details.open) collapsedCategories.delete(collapseKey);
+        else collapsedCategories.add(collapseKey);
+        saveCollapsedCategories();
+      });
+    });
     $('#quickAdd').onclick=()=>{page='plugins';editor={os:'windows',plugin:null};render()};
     if(page==='plugins'&&$('#dragModeToggle')) { $('#dragModeToggle').onclick=()=>{dragMode=!dragMode;render()}; enableDragAndDrop(); }
     if(page==='overview'&&$('#analyticsPeriod')) $('#analyticsPeriod').onchange=async e=>{analyticsPeriod=e.target.value;try{state.analytics=(await api(`/admin/analytics?period=${analyticsPeriod}`)).analytics;render()}catch(error){toast(error.message)}};
