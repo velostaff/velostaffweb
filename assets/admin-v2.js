@@ -193,7 +193,21 @@
       });
     });
     $('#quickAdd').onclick=()=>{page='plugins';editor={os:'windows',plugin:null};render()};
-    if(page==='plugins'&&$('#dragModeToggle')) { $('#dragModeToggle').onclick=()=>{dragMode=!dragMode;render()}; enableDragAndDrop(); }
+    if(page==='plugins'&&$('#dragModeToggle')) {
+      $('#dragModeToggle').onclick=()=>{
+        dragMode=!dragMode;
+        // Dragging needs every destination visible. When edit mode ends, return
+        // the library to its compact, closed-category view in one action.
+        document.querySelectorAll('details.plugin-category[data-collapse-key]').forEach(details=>{
+          const collapseKey=details.dataset.collapseKey;
+          if(dragMode) collapsedCategories.delete(collapseKey);
+          else collapsedCategories.add(collapseKey);
+        });
+        saveCollapsedCategories();
+        render();
+      };
+      enableDragAndDrop();
+    }
     if(page==='overview'&&$('#analyticsPeriod')) $('#analyticsPeriod').onchange=async e=>{analyticsPeriod=e.target.value;try{state.analytics=(await api(`/admin/analytics?period=${analyticsPeriod}`)).analytics;render()}catch(error){toast(error.message)}};
     if(page==='messages'&&state.requests.length){
       const boxes=[...document.querySelectorAll('[data-request-select]')], all=$('#selectAllRequests'), selected=$('#selectedRequestCount'), removeSelected=$('#deleteSelectedRequests');
