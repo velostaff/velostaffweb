@@ -3,7 +3,7 @@ const fail = (message, status = 400) => json({ error: message }, status);
 
 function clean(value, length = 300) { return String(value ?? '').trim().slice(0, length); }
 function validUrl(value) { try { const url = new URL(value); return /^https?:$/.test(url.protocol) ? url.href : ''; } catch { return ''; } }
-function initialState() { return { plugins: [], settings: { siteName: 'VELO STAFF', discordUrl: 'https://discord.gg/Yx5VaqPtFq', tagline: '', announcement: '' }, emergency: { enabled: false, plugins: [] }, requests: [], sessions: [], moderators: [], adminAccount: null, analytics: { presence: {}, pageViews: [], daily: {}, bucketMigrated: false }, updatedAt: new Date().toISOString() }; }
+function initialState() { return { plugins: [], layout: { mac: [], windows: [] }, settings: { siteName: 'VELO STAFF', discordUrl: 'https://discord.gg/Yx5VaqPtFq', tagline: '', announcement: '' }, emergency: { enabled: false, plugins: [] }, requests: [], sessions: [], moderators: [], adminAccount: null, analytics: { presence: {}, pageViews: [], daily: {}, bucketMigrated: false }, updatedAt: new Date().toISOString() }; }
 async function database(env) {
   if (!env.VELO_DB) throw new Error('VELO_DB D1 binding is not configured');
   await env.VELO_DB.exec('CREATE TABLE IF NOT EXISTS velostaff_state (id TEXT PRIMARY KEY, data TEXT NOT NULL); CREATE TABLE IF NOT EXISTS velostaff_visitors (visitor_id TEXT PRIMARY KEY, last_seen INTEGER NOT NULL); CREATE TABLE IF NOT EXISTS velostaff_pageviews (id INTEGER PRIMARY KEY AUTOINCREMENT, visited_at INTEGER NOT NULL); CREATE INDEX IF NOT EXISTS idx_velostaff_visitors_seen ON velostaff_visitors(last_seen); CREATE INDEX IF NOT EXISTS idx_velostaff_pageviews_at ON velostaff_pageviews(visited_at);');
@@ -15,7 +15,7 @@ async function stateDoc(db) {
   if (row?.data) try { return { ...initialState(), ...JSON.parse(row.data) }; } catch { /* reset unreadable state */ }
   const doc = initialState(); await persist(db, doc); return doc;
 }
-function publicState(doc) { return { plugins: doc.emergency?.enabled ? (doc.emergency.plugins || []) : (doc.plugins || []), settings: doc.settings || {}, emergency: !!doc.emergency?.enabled }; }
+function publicState(doc) { return { plugins: doc.emergency?.enabled ? (doc.emergency.plugins || []) : (doc.plugins || []), layout: doc.layout || { mac: [], windows: [] }, settings: doc.settings || {}, emergency: !!doc.emergency?.enabled }; }
 function dateKey(value) { return new Date(value).toISOString().slice(0, 10); }
 function analyticsSeries(analytics, period) {
   const now = new Date(), sumDays = (start, days) => {
@@ -70,6 +70,51 @@ function normalPlugin(data, old = {}) {
   if (!mac.url && !windows.url) throw new Error('At least one download link is required');
   return { ...old, id: old.id || crypto.randomUUID(), title: clean(data.title, 120), version: clean(data.version || '1.0', 40), description: clean(data.description, 1200), category: clean(data.category || old.category || 'General', 80), platformCategories: { mac: clean(data.platformCategories?.mac || old.platformCategories?.mac || data.category || 'General', 80), windows: clean(data.platformCategories?.windows || old.platformCategories?.windows || data.category || 'General', 80) }, platforms: { mac, windows }, updatedAt: new Date().toISOString() };
 }
+function pluginCategory(plugin, os) { return clean(plugin.platformCategories?.[os] || plugin.category || 'General', 80) || 'General'; }
+function normalizeLayout(doc) {
+  const before = JSON.stringify(doc.layout || null);
+  doc.layout ??= { mac: [], windows: [] };
+  for (const os of ['mac', 'windows']) {
+    const plugins = (doc.plugins || []).filter(plugin => plugin.platforms?.[os]?.url);
+    const groups = new Map();
+    for (const plugin of plugins) { const name = pluginCategory(plugin, os); if (!groups.has(name)) groups.set(name, []); groups.get(name).push(plugin.id); }
+    const source = Array.isArray(doc.layout[os]) ? doc.layout[os] : [], usedCategories = new Set(), result = [];
+    const makeCategory = (entry, name) => {
+      const wanted = groups.get(name) || [], valid = new Set(wanted), seen = new Set(), items = [];
+      for (const item of Array.isArray(entry?.items) ? entry.items : []) {
+        if (item?.type === 'spacer' && typeof item.id === 'string' && !seen.has(item.id)) { seen.add(item.id); items.push({ type: 'spacer', id: item.id }); }
+        if (item?.type === 'plugin' && valid.has(item.id) && !seen.has(`plugin:${item.id}`)) { seen.add(`plugin:${item.id}`); items.push({ type: 'plugin', id: item.id }); }
+      }
+      for (const id of wanted) if (!seen.has(`plugin:${id}`)) items.push({ type: 'plugin', id });
+      return { type: 'category', id: typeof entry?.id === 'string' ? entry.id : crypto.randomUUID(), name, items };
+    };
+    for (const entry of source) {
+      if (entry?.type === 'spacer' && typeof entry.id === 'string') { result.push({ type: 'spacer', id: entry.id }); continue; }
+      if (entry?.type === 'category' && groups.has(entry.name) && !usedCategories.has(entry.name)) { usedCategories.add(entry.name); result.push(makeCategory(entry, entry.name)); }
+    }
+    for (const [name] of groups) if (!usedCategories.has(name)) result.push(makeCategory(null, name));
+    doc.layout[os] = result;
+  }
+  return before !== JSON.stringify(doc.layout);
+}
+function applyLayoutOrder(doc, proposed) {
+  normalizeLayout(doc);
+  for (const os of ['mac', 'windows']) {
+    const current = doc.layout[os], byId = new Map(current.map(item => [item.id, item])), seen = new Set(), ordered = [];
+    for (const raw of Array.isArray(proposed?.[os]) ? proposed[os] : []) {
+      const entry = byId.get(raw?.id); if (!entry || seen.has(entry.id)) continue; seen.add(entry.id);
+      if (entry.type === 'category') {
+        const childById = new Map(entry.items.map(item => [item.id, item])), childSeen = new Set(), items = [];
+        for (const childRaw of Array.isArray(raw.items) ? raw.items : []) { const child = childById.get(childRaw?.id); if (child && !childSeen.has(child.id)) { childSeen.add(child.id); items.push(child); } }
+        for (const child of entry.items) if (!childSeen.has(child.id)) items.push(child);
+        ordered.push({ ...entry, items });
+      } else ordered.push(entry);
+    }
+    for (const entry of current) if (!seen.has(entry.id)) ordered.push(entry);
+    doc.layout[os] = ordered;
+  }
+  normalizeLayout(doc);
+}
 function emergencyPlugin(data) {
   const platform = key => {
     const value = data.platforms?.[key] || {};
@@ -86,6 +131,7 @@ export async function onRequest(context) {
   const method = request.method.toUpperCase(), part = Array.isArray(params.path) ? params.path.join('/') : (params.path || ''), path = '/' + part;
   try {
     const db = await database(env), doc = await stateDoc(db);
+    if (normalizeLayout(doc)) await persist(db, doc);
     if (method === 'GET' && path === '/state') return json(publicState(doc));
     if (method === 'POST' && path === '/track') {
       const data = await body(request), visitorId = clean(data.visitorId, 80);
@@ -114,7 +160,7 @@ export async function onRequest(context) {
     const actor = authorised(request, doc);
     if (!actor) return fail('Sign in required', 401);
     const isAdmin = actor.role === 'admin';
-    if (method === 'GET' && path === '/admin/bootstrap') return json({ plugins: doc.plugins, settings: doc.settings, emergency: doc.emergency, requests: doc.requests, moderators: isAdmin ? doc.moderators : [], actor: { role: actor.role, name: actor.username }, analytics: await analyticsSummary(db) });
+    if (method === 'GET' && path === '/admin/bootstrap') return json({ plugins: doc.plugins, layout: doc.layout, settings: doc.settings, emergency: doc.emergency, requests: doc.requests, moderators: isAdmin ? doc.moderators : [], actor: { role: actor.role, name: actor.username }, analytics: await analyticsSummary(db) });
     if (method === 'DELETE' && path === '/admin/requests') {
       const data = await body(request), ids = Array.isArray(data.ids) ? data.ids.map(id => clean(id, 80)).filter(Boolean) : [];
       if (!data.all && !ids.length) return fail('Select at least one message');
@@ -122,10 +168,41 @@ export async function onRequest(context) {
       doc.updatedAt = new Date().toISOString(); await persist(db, doc); return json({ requests: doc.requests });
     }
     if (method === 'GET' && path === '/admin/analytics') { if (!isAdmin) return fail('Admin permission required', 403); const period = new URL(request.url).searchParams.get('period') || 'day'; return json({ analytics: await analyticsSummary(db, ['day','week','month','year'].includes(period) ? period : 'day') }); }
-    if (method === 'POST' && path === '/admin/plugins') { const plugin = normalPlugin(await body(request)); doc.plugins.unshift(plugin); doc.updatedAt = new Date().toISOString(); await persist(db, doc); return json({ plugin }, 201); }
+    if (method === 'POST' && path === '/admin/layout') { if (!isAdmin) return fail('Admin permission required', 403); applyLayoutOrder(doc, (await body(request)).layout); doc.updatedAt = new Date().toISOString(); await persist(db, doc); return json({ layout: doc.layout }); }
+    if (method === 'POST' && path === '/admin/layout/spacers') {
+      if (!isAdmin) return fail('Admin permission required', 403);
+      const data = await body(request), os = clean(data.platform, 10).toLowerCase(), parentId = clean(data.categoryId, 80);
+      if (!['mac','windows'].includes(os)) return fail('Choose Mac or Windows');
+      const spacer = { type: 'spacer', id: crypto.randomUUID() };
+      if (parentId) { const category = doc.layout[os].find(item => item.type === 'category' && item.id === parentId); if (!category) return fail('Category not found', 404); category.items.push(spacer); }
+      else doc.layout[os].push(spacer);
+      doc.updatedAt = new Date().toISOString(); await persist(db, doc); return json({ layout: doc.layout });
+    }
+    if (method === 'DELETE' && path === '/admin/layout/spacers') {
+      if (!isAdmin) return fail('Admin permission required', 403);
+      const data = await body(request), os = clean(data.platform, 10).toLowerCase(), spacerId = clean(data.spacerId, 80);
+      if (!['mac','windows'].includes(os) || !spacerId) return fail('Spacing item not found');
+      doc.layout[os] = doc.layout[os].filter(item => item.id !== spacerId).map(item => item.type === 'category' ? { ...item, items: item.items.filter(child => child.id !== spacerId) } : item);
+      doc.updatedAt = new Date().toISOString(); await persist(db, doc); return json({ layout: doc.layout });
+    }
+    if (method === 'POST' && path === '/admin/layout/categories/rename') {
+      if (!isAdmin) return fail('Admin permission required', 403);
+      const data = await body(request), os = clean(data.platform, 10).toLowerCase(), categoryId = clean(data.categoryId, 80), nextName = clean(data.name, 80);
+      if (!['mac', 'windows'].includes(os) || !categoryId || !nextName) return fail('Category name is required');
+      const category = doc.layout[os].find(item => item.type === 'category' && item.id === categoryId);
+      if (!category) return fail('Category not found', 404);
+      if (doc.layout[os].some(item => item.type === 'category' && item.id !== categoryId && item.name.toLowerCase() === nextName.toLowerCase())) return fail('A category with this name already exists');
+      const oldName = category.name;
+      for (const plugin of doc.plugins || []) if (plugin.platforms?.[os]?.url && pluginCategory(plugin, os) === oldName) {
+        plugin.platformCategories ??= {}; plugin.platformCategories[os] = nextName;
+      }
+      category.name = nextName; normalizeLayout(doc);
+      doc.updatedAt = new Date().toISOString(); await persist(db, doc); return json({ plugins: doc.plugins, layout: doc.layout });
+    }
+    if (method === 'POST' && path === '/admin/plugins') { const plugin = normalPlugin(await body(request)); doc.plugins.unshift(plugin); normalizeLayout(doc); doc.updatedAt = new Date().toISOString(); await persist(db, doc); return json({ plugin, layout: doc.layout }, 201); }
     const pluginMatch = path.match(/^\/admin\/plugins\/([\w-]+)$/);
-    if (pluginMatch && method === 'PUT') { const index = doc.plugins.findIndex(p => p.id === pluginMatch[1]); if (index < 0) return fail('Plugin not found', 404); doc.plugins[index] = normalPlugin(await body(request), doc.plugins[index]); doc.updatedAt = new Date().toISOString(); await persist(db, doc); return json({ plugin: doc.plugins[index] }); }
-    if (pluginMatch && method === 'DELETE') { if (!isAdmin) return fail('Admin permission required', 403); doc.plugins = doc.plugins.filter(p => p.id !== pluginMatch[1]); doc.updatedAt = new Date().toISOString(); await persist(db, doc); return json({ ok: true }); }
+    if (pluginMatch && method === 'PUT') { const index = doc.plugins.findIndex(p => p.id === pluginMatch[1]); if (index < 0) return fail('Plugin not found', 404); doc.plugins[index] = normalPlugin(await body(request), doc.plugins[index]); normalizeLayout(doc); doc.updatedAt = new Date().toISOString(); await persist(db, doc); return json({ plugin: doc.plugins[index], layout: doc.layout }); }
+    if (pluginMatch && method === 'DELETE') { if (!isAdmin) return fail('Admin permission required', 403); doc.plugins = doc.plugins.filter(p => p.id !== pluginMatch[1]); normalizeLayout(doc); doc.updatedAt = new Date().toISOString(); await persist(db, doc); return json({ ok: true, layout: doc.layout }); }
     if (method === 'POST' && path === '/admin/emergency/toggle') { if (!isAdmin) return fail('Admin permission required', 403); doc.emergency.enabled = !!(await body(request)).enabled; doc.updatedAt = new Date().toISOString(); await persist(db, doc); return json({ emergency: doc.emergency }); }
     if (method === 'POST' && path === '/admin/emergency/plugins') {
       if (!isAdmin) return fail('Admin permission required', 403);

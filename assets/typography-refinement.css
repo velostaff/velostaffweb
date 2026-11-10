@@ -1,0 +1,8 @@
+/* SF Pro system stack for all plugin interface content. */
+:root{--sf-pro:-apple-system,BlinkMacSystemFont,"SF Pro Display","SF Pro Text","Helvetica Neue",Arial,sans-serif;--title-serif:Georgia,"Times New Roman",serif}
+body,.plugin-card,.public-category,.vault-toolbar,.categories,.search-box,.vault-bottom,.footer-bottom{font-family:var(--sf-pro)}
+.public-category summary{font-family:var(--title-serif);font-size:clamp(17px,1.55vw,23px);font-weight:700;letter-spacing:-.025em;text-transform:none;padding-block:16px;color:#f5eded}
+.public-category .plugin-card h3{font-family:var(--sf-pro);font-size:15px;font-weight:800;letter-spacing:-.025em;text-transform:none}
+.public-category .plugin-version,.public-category .download-btn:before,.download-btn,.plugin-card p,.plugin-card .card-meta{font-family:var(--sf-pro)}
+/* No large VELO STAFF wordmark at the bottom: keep only the useful footer controls. */
+footer .footer-brand{display:none!important}footer{padding-top:34px}.footer-bottom{margin-top:0}

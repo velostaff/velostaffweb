@@ -1,15 +1,15 @@
 (() => {
  'use strict';
  const $=q=>document.querySelector(q),$$=q=>Array.from(document.querySelectorAll(q));
- const catalog=window.KV_CATALOG||{plugins:[],settings:{}};let directCatalog=null;try{directCatalog=JSON.parse(localStorage.getItem('velostaff-direct-admin-v3')||'')}catch{}const fallback=location.protocol==='file:'&&directCatalog?{plugins:directCatalog.emergency?.enabled?directCatalog.emergency.plugins:directCatalog.plugins,settings:directCatalog.settings||catalog.settings}:{...catalog};
- let plugins=Array.isArray(fallback.plugins)?fallback.plugins:[], settings=fallback.settings||{};if(location.protocol==='file:'&&directCatalog?.emergency?.enabled)document.body.classList.add('emergency-active');
+ const catalog=window.KV_CATALOG||{plugins:[],settings:{}};let directCatalog=null;try{directCatalog=JSON.parse(localStorage.getItem('velostaff-direct-admin-v3')||'')}catch{}const fallback=location.protocol==='file:'&&directCatalog?{plugins:directCatalog.emergency?.enabled?directCatalog.emergency.plugins:directCatalog.plugins,layout:directCatalog.layout||{mac:[],windows:[]},settings:directCatalog.settings||catalog.settings}:{...catalog};
+ let plugins=Array.isArray(fallback.plugins)?fallback.plugins:[], layout=fallback.layout||{mac:[],windows:[]}, settings=fallback.settings||{};if(location.protocol==='file:'&&directCatalog?.emergency?.enabled)document.body.classList.add('emergency-active');
  let platform='windows',category='All',query='';
  const allSystemsButton=document.querySelector('[data-platform="all"]');if(allSystemsButton)allSystemsButton.remove();document.querySelector('[data-platform="windows"]')?.classList.add('active');
  const toast=(msg)=>{const e=$('#toast');e.textContent=msg;e.classList.add('show');clearTimeout(window.toastClock);window.toastClock=setTimeout(()=>e.classList.remove('show'),3300)};
  const escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
  const validUrl=s=>{try{let u=new URL(s);return ['http:','https:'].includes(u.protocol)?u.href:null}catch{return null}};
  const categoryFor=(p,os)=>p.platformCategories?.[os]||p.category||'General';
- function show(){
+ function showFlat(){
   const cats=['All',...new Set(plugins.filter(p=>platform==='all'||p.platforms?.[platform]?.url||p.platforms?.[platform]?.fileKey).map(p=>categoryFor(p,platform)))];if(!cats.includes(category))category='All';
   $('#categoryFilters').innerHTML=cats.map(c=>`<button type="button" class="${category===c?'active':''}" data-cat="${escape(c)}">${escape(c).toUpperCase()}</button>`).join('');
   const found=plugins.filter(p=>(platform==='all'||(p.platforms?.[platform]&&(p.platforms[platform].url||p.platforms[platform].fileKey)))&&(category==='All'||categoryFor(p,platform)===category)&&(!query||[p.title,p.description,categoryFor(p,platform),p.version].some(x=>String(x||'').toLowerCase().includes(query))));
@@ -22,6 +22,32 @@
    return `<article class="plugin-card"><div class="card-top"><div class="card-icon">${escape(p.icon||'✦')}</div><div class="card-meta">${String(i+1).padStart(3,'0')} / ${escape(categoryFor(p,platform)||'TOOLS').toUpperCase()}<br>V${escape(p.version||'1.0')}</div></div><h3 title="${escape(p.title)}">${escape(p.title)}</h3><p>${escape(p.description)}</p><div class="card-bottom"><span class="plugin-version" title="Version ${escape(p.version||'1.0')}">V${escape(p.version||'1.0')}</span><div class="downloads">${btns}</div></div></article>`;
   }).join('');
  }
+ function renderPluginCard(p, index) {
+  const systems=['windows','mac'].filter(os=>p.platforms?.[os]?.url||p.platforms?.[os]?.fileKey);
+  const btns=systems.filter(os=>platform==='all'||os===platform).flatMap(os=>[p.platforms[os].url,...(p.platforms[os].alternatives||[])].filter(Boolean).map((_,linkIndex)=>`<button class="download-btn" type="button" data-id="${escape(p.id)}" data-os="${os}" data-link="${linkIndex}" aria-label="Download ${escape(p.title)}">DOWNLOAD <span>↓</span></button>`)).join('');
+  return `<article class="plugin-card"><div class="card-top"><div class="card-icon">${escape(p.icon||'✦')}</div><div class="card-meta">${String(index).padStart(3,'0')} / ${escape(p.version||'1.0')}</div></div><h3 title="${escape(p.title)}">${escape(p.title)}</h3><p>${escape(p.description)}</p><div class="card-bottom"><span class="plugin-version" title="Version ${escape(p.version||'1.0')}">V${escape(p.version||'1.0')}</span><div class="downloads">${btns}</div></div></article>`;
+ }
+ function show(){
+  const available=plugins.filter(p=>platform==='all'||p.platforms?.[platform]?.url||p.platforms?.[platform]?.fileKey);
+  const names=[...new Set(available.map(p=>categoryFor(p,platform)))];
+  const ordered=(layout?.[platform]||[]).filter(x=>x.type==='category'&&names.includes(x.name)).map(x=>x.name);
+  const categories=[...ordered,...names.filter(name=>!ordered.includes(name))];
+  const cats=['All',...categories];if(!cats.includes(category))category='All';
+  $('#categoryFilters').innerHTML=cats.map(c=>`<button type="button" class="${category===c?'active':''}" data-cat="${escape(c)}">${escape(c).toUpperCase()}</button>`).join('');
+  const matches=p=>available.includes(p)&&(category==='All'||categoryFor(p,platform)===category)&&(!query||[p.title,p.description,categoryFor(p,platform),p.version].some(x=>String(x||'').toLowerCase().includes(query)));
+  const found=available.filter(matches);$('#totalPlugins').textContent=String(plugins.length).padStart(2,'0');$('#emptyState').style.display=found.length?'none':'flex';
+  if(!found.length){$('#pluginGrid').innerHTML='';return}
+  let serial=0, output=[];const rendered=new Set();
+  const renderCategory=name=>{
+   if(rendered.has(name)||!categories.includes(name))return;rendered.add(name);
+   const entry=(layout?.[platform]||[]).find(x=>x.type==='category'&&x.name===name), map=new Map(found.filter(p=>categoryFor(p,platform)===name).map(p=>[p.id,p]));
+   const rows=[];for(const item of entry?.items||[]){if(item.type==='spacer'&&category==='All'&&!query)rows.push('<div class="public-layout-space" aria-label="Spacing"></div>');if(item.type==='plugin'&&map.has(item.id)){rows.push(renderPluginCard(map.get(item.id),++serial));map.delete(item.id)}}
+   map.forEach(p=>rows.push(renderPluginCard(p,++serial)));if(!rows.length)return;
+   output.push(`<details class="public-category" open><summary><span>${escape(name)}</span><b>${rows.filter(row=>row.includes('plugin-card')).length}</b><i>⌄</i></summary><div class="public-category-rows">${rows.join('')}</div></details>`);
+  };
+  for(const entry of layout?.[platform]||[]){if(entry.type==='category')renderCategory(entry.name);else if(entry.type==='spacer'&&category==='All'&&!query)output.push('<div class="public-layout-space top-space" aria-label="Spacing"></div>')}
+  categories.forEach(renderCategory);$('#pluginGrid').innerHTML=output.join('');
+ }
  $$('.os-filters button').forEach(btn=>btn.addEventListener('click',()=>{platform=btn.dataset.platform;$$('.os-filters button').forEach(b=>b.classList.toggle('active',b===btn));show()}));
  $('#categoryFilters').addEventListener('click',e=>{const btn=e.target.closest('[data-cat]');if(btn){category=btn.dataset.cat;show()}});
  $('#searchInput').addEventListener('input',e=>{query=e.target.value.trim().toLowerCase();show()});
@@ -30,7 +56,7 @@
   if(!link){toast('This download link is unavailable.');return}
   const el=document.createElement('a');el.href=link;el.target='_blank';el.rel='noopener noreferrer';document.body.appendChild(el);el.click();el.remove();toast('Opening download · '+p.title);
  });
- function applyState(data){if(!data||!Array.isArray(data.plugins))return;plugins=data.plugins;settings=data.settings||settings;document.body.classList.toggle('emergency-active',!!data.emergency);applySettings();show()}
+ function applyState(data){if(!data||!Array.isArray(data.plugins))return;plugins=data.plugins;layout=data.layout||layout;settings=data.settings||settings;document.body.classList.toggle('emergency-active',!!data.emergency);applySettings();show()}
  function applySettings(){const a=settings.accent;if(/^#[0-9a-fA-F]{6}$/.test(a||''))document.documentElement.style.setProperty('--red',a);if(settings.tagline)$('#heroSubtitle').textContent=settings.tagline;if(settings.announcement){$('#announcementLabel').textContent=settings.announcement;$('#announcementLabel').title=settings.announcement}if(settings.siteName){document.getElementById('brandName').textContent=settings.siteName;document.getElementById('footerBrand').textContent=settings.siteName;document.title=settings.siteName+' — Creator Tools'}if(validUrl(settings.discordUrl))$('#discordLink').href=settings.discordUrl;}
  if(location.protocol!=='file:')fetch('/api/state',{cache:'no-store'}).then(r=>r.ok?r.json():null).then(data=>{if(data){window.KV_MODE='online';applyState(data)}}).catch(()=>{});
  const birds=$('#birds'),ctx=birds.getContext('2d',{alpha:true});let w=0,h=0,birdsData=[],clickFlock=[],mouse={x:-1000,y:-1000},sx=0,sy=0;
@@ -71,5 +97,5 @@
  const track=event=>fetch('/api/track',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({event,visitorId}),keepalive:true}).catch(()=>{});
  if(location.protocol!=='file:'){track('pageview');setInterval(()=>{if(!document.hidden)track('heartbeat')},30000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)track('heartbeat')})}
  const feedbackToggle=$('#feedbackToggle'),feedbackForm=$('#feedbackForm');feedbackToggle.addEventListener('click',()=>feedbackForm.classList.toggle('hidden'));feedbackForm.addEventListener('submit',async e=>{e.preventDefault();const payload={pluginName:$('#feedbackPlugin').value.trim(),platform:$('#feedbackPlatform').value,email:$('#feedbackEmail').value.trim(),name:$('#feedbackName').value.trim(),message:$('#feedbackMessage').value.trim(),notify:$('#feedbackNotify').checked};try{if(!payload.pluginName)throw Error('Enter the plugin name');if(location.protocol==='file:'||window.KV_MODE!=='online')throw Error('Requests need the live Velostaff server');const r=await fetch('/api/requests',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(payload)});if(!r.ok)throw Error((await r.json()).error||'Could not send request');feedbackForm.reset();feedbackForm.classList.add('hidden');toast('Request sent — thank you!')}catch(err){toast(err.message||'Could not send request. Please try again.')}});
- document.getElementById('year').textContent=new Date().getFullYear();applySettings();show();
+ document.querySelector('footer .footer-brand')?.remove();document.getElementById('year').textContent=new Date().getFullYear();applySettings();show();
 })();

@@ -1,9 +1,10 @@
 (() => {
   'use strict';
+  const layoutStyles=document.createElement('link');layoutStyles.rel='stylesheet';layoutStyles.href='assets/drag-layout.css';document.head.appendChild(layoutStyles);
   const $ = s => document.querySelector(s);
   const key = 'velostaff-direct-admin-v3';
   const backup = window.KV_CATALOG || {plugins: [], settings: {}};
-  let state, page = 'overview', editor = null, emergencyEditor = null, analyticsPeriod = 'day';
+  let state, page = 'overview', editor = null, emergencyEditor = null, analyticsPeriod = 'day', dragMode = false, dragging = null;
   const online = location.protocol !== 'file:';
   let token = sessionStorage.getItem('velostaff-api-token') || '';
   const esc = v => String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -19,12 +20,12 @@
   }
   async function loadOnline() {
     const data = await api('/admin/bootstrap');
-    state = { plugins:data.plugins || [], settings:data.settings || {}, emergency:data.emergency || {enabled:false,plugins:[]}, requests:data.requests || [], moderators:data.moderators || [], actor:data.actor || {role:'admin',name:'Admin'}, analytics:data.analytics || {liveVisitors:0,pageViews24h:0} };
+    state = { plugins:data.plugins || [], layout:data.layout || {mac:[],windows:[]}, settings:data.settings || {}, emergency:data.emergency || {enabled:false,plugins:[]}, requests:data.requests || [], moderators:data.moderators || [], actor:data.actor || {role:'admin',name:'Admin'}, analytics:data.analytics || {liveVisitors:0,pageViews24h:0} };
     state.plugins.forEach(p => { p.platformCategories ??= {}; p.platformCategories.mac ??= p.category || 'General'; p.platformCategories.windows ??= p.category || 'General'; });
   }
   function load() {
     try { state = JSON.parse(localStorage.getItem(key) || ''); } catch (_) {}
-    state ??= {plugins: backup.plugins || [], settings: backup.settings || {}, emergency: {enabled:false,plugins:[]}, requests:[], moderators:[], actor:{role:'admin',name:'Admin'},analytics:{liveVisitors:0,pageViews24h:0}};
+    state ??= {plugins: backup.plugins || [], layout:{mac:[],windows:[]}, settings: backup.settings || {}, emergency: {enabled:false,plugins:[]}, requests:[], moderators:[], actor:{role:'admin',name:'Admin'},analytics:{liveVisitors:0,pageViews24h:0}};
     state.plugins ??= []; state.requests ??= [];
     state.emergency ??= {enabled:false,plugins:[]}; state.emergency.plugins ??= [];
     // Old shared categories are copied once, then Mac and Windows stay independent.
@@ -38,6 +39,28 @@
   function save() { if (!online) localStorage.setItem(key, JSON.stringify(state)); }
   function toast(msg) { const el = $('#toast'); if (!el) return; el.textContent = msg; el.classList.add('show'); setTimeout(() => el.classList.remove('show'), 2300); }
   function cat(p, os) { return p.platformCategories?.[os] || p.category || 'General'; }
+  function ensureLayout() {
+    state.layout ??= {mac:[],windows:[]};
+    for (const os of ['mac','windows']) {
+      const groups=new Map();
+      state.plugins.filter(p=>p.platforms?.[os]?.url).forEach(p=>{const name=cat(p,os);if(!groups.has(name))groups.set(name,[]);groups.get(name).push(p.id)});
+      const old=Array.isArray(state.layout[os])?state.layout[os]:[], used=new Set(), next=[];
+      for(const entry of old){
+        if(entry?.type==='spacer'&&entry.id){next.push({type:'spacer',id:entry.id});continue}
+        if(entry?.type!=='category'||!groups.has(entry.name)||used.has(entry.name))continue;
+        used.add(entry.name);const ids=groups.get(entry.name), seen=new Set(), items=[];
+        for(const item of Array.isArray(entry.items)?entry.items:[]){
+          if(item?.type==='spacer'&&item.id&&!seen.has(item.id)){seen.add(item.id);items.push({type:'spacer',id:item.id})}
+          if(item?.type==='plugin'&&ids.includes(item.id)&&!seen.has('p:'+item.id)){seen.add('p:'+item.id);items.push({type:'plugin',id:item.id})}
+        }
+        ids.forEach(id=>{if(!seen.has('p:'+id))items.push({type:'plugin',id})});next.push({type:'category',id:entry.id||crypto.randomUUID(),name:entry.name,items});
+      }
+      groups.forEach((ids,name)=>{if(!used.has(name))next.push({type:'category',id:crypto.randomUUID(),name,items:ids.map(id=>({type:'plugin',id}))})});
+      state.layout[os]=next;
+    }
+  }
+  function layoutFor(os){ensureLayout();return state.layout[os]}
+  function dragProps(kind,os,id,parent=''){return dragMode?` draggable="true" data-drag-kind="${kind}" data-drag-os="${os}" data-drag-id="${esc(id)}" data-drag-parent="${esc(parent)}"`:''}
   function nav() {
     const links = [['overview','◇','OVERVIEW'],['plugins','▦','PLUGINS'],['messages','✉','MESSAGES'],['emergency','!','EMERGENCY'],['settings','◎','SETTINGS'],['security','⌘','SECURITY']];
     const isAdmin = state?.actor?.role !== 'moderator';
@@ -45,7 +68,7 @@
     return `<aside class="sidebar"><div class="side-brand"><div class="brand-square">VS</div><div>VELO STAFF<small>${isAdmin?'ADMIN ACCESS':'MODERATOR ACCESS'}</small></div></div><div class="sidebar-label">WORKSPACE</div><nav class="side-nav">${visible.map(([id,i,n]) => `<button data-page="${id}" class="${page===id?'active':''}"><i>${i}</i>${n}</button>`).join('')}</nav><div class="side-spacer"></div><a class="outside-link" href="index.html" target="_blank">OPEN WEBSITE ↗</a></aside>`;
   }
   function alt(v='') { return `<div class="link-row"><input type="url" value="${esc(v)}" placeholder="Alternative link"><button class="secondary compact" type="button" data-remove>REMOVE</button></div>`; }
-  function pluginRow(p, os) {
+  function pluginRow(p, os, parentId='') {
     const n = 1 + (p.platforms?.[os]?.alternatives || []).filter(Boolean).length;
     const remove = state.actor?.role === 'moderator' ? '' : `<button class="table-action danger" data-delete="${esc(p.id)}">DELETE</button>`;
     return `<div class="plugin-row"><div><strong>${esc(p.title)}</strong><small>v${esc(p.version||'1.0')} · ${n} link${n===1?'':'s'}</small></div><div><button class="table-action" data-edit="${esc(p.id)}" data-os="${os}">EDIT</button>${remove}</div></div>`;
@@ -58,6 +81,21 @@
       return `<details class="plugin-category" open><summary><span>${esc(name)}</span><b>${items.length}</b><button class="category-pencil" type="button" title="Rename ${title(os)} category" data-rename-category="${esc(name)}" data-os="${os}">✎</button><i>⌄</i></summary>${items.map(p=>pluginRow(p,os)).join('')}</details>`;
     }).join('');
   }
+  function categoriesV2(os) {
+    const entries=layoutFor(os);
+    if (!entries.some(entry=>entry.type==='category')) return '<div class="empty">No plugins yet. Add your first plugin above.</div>';
+    return entries.map(entry=>{
+      if(entry.type==='spacer') return `<div class="admin-layout-space" data-layout-kind="top-spacer" data-layout-os="${os}" data-layout-id="${esc(entry.id)}"><span>SPACING</span>${state.actor?.role==='moderator'?'':`<button class="table-action danger" data-remove-spacing="${esc(entry.id)}" data-os="${os}">REMOVE</button>`}</div>`;
+      const pluginIds=new Set(entry.items.filter(item=>item.type==='plugin').map(item=>item.id));
+      const count=[...pluginIds].filter(id=>state.plugins.some(p=>p.id===id&&p.platforms?.[os]?.url)).length;
+      const children=entry.items.map(item=>{
+        if(item.type==='spacer') return `<div class="admin-layout-space child-space" data-layout-kind="child-spacer" data-layout-os="${os}" data-layout-id="${esc(item.id)}" data-layout-parent="${esc(entry.id)}"><span>SPACING</span>${state.actor?.role==='moderator'?'':`<button class="table-action danger" data-remove-spacing="${esc(item.id)}" data-os="${os}">REMOVE</button>`}</div>`;
+        const p=state.plugins.find(plugin=>plugin.id===item.id); return p?pluginRow(p,os,entry.id):'';
+      }).join('');
+      const actions=state.actor?.role==='moderator'?'':`<button class="table-action" type="button" data-add-spacing="${os}" data-parent="${esc(entry.id)}">+ GAP</button><button class="category-pencil" type="button" title="Rename ${title(os)} category" data-rename-category-id="${esc(entry.id)}" data-os="${os}">EDIT</button>`;
+      return `<details class="plugin-category" open data-layout-kind="category" data-layout-os="${os}" data-layout-id="${esc(entry.id)}"><summary><span>${esc(entry.name)}</span><b>${count}</b>${actions}<i>v</i></summary>${children}</details>`;
+    }).join('');
+  }
   function form(os) {
     if (!editor || editor.os !== os) return '';
     const p = editor.plugin || {title:'',version:'1.0',platforms:{[os]:{url:'',alternatives:[]}}};
@@ -67,9 +105,10 @@
   }
   function panel(os) {
     const count = state.plugins.filter(p=>p.platforms?.[os]?.url).length;
-    return `<section class="platform-card"><div class="platform-title"><h4>${title(os)}</h4><span>${count} PLUGIN${count===1?'':'S'}</span></div><button class="primary" data-start="${os}">+ ADD ${title(os)} PLUGIN</button>${form(os)}<div class="plugin-list categorized-list">${categories(os)}</div></section>`;
+    const spacing=state.actor?.role==='moderator'?'':`<button class="secondary compact" data-add-spacing="${os}">+ ADD SPACING</button>`;
+    return `<section class="platform-card"><div class="platform-title"><h4>${title(os)}</h4><span>${count} PLUGIN${count===1?'':'S'}</span></div><div class="layout-actions"><button class="primary" data-start="${os}">+ ADD ${title(os)} PLUGIN</button>${spacing}</div>${form(os)}<div class="plugin-list categorized-list">${categoriesV2(os)}</div></section>`;
   }
-  function plugins() { return `<div class="section-row"><div><div class="red-label">ORGANISED LIBRARY</div><h3>PLUGINS<span>.</span></h3><p>Mac and Windows categories are separate. Editing one never changes the other.</p></div></div><div class="platform-columns">${panel('mac')}${panel('windows')}</div>`; }
+  function plugins() { const controls=state.actor?.role==='moderator'?'':`<button id="dragModeToggle" class="secondary drag-mode-toggle ${dragMode?'is-on':''}" type="button">DRAG MODE: ${dragMode?'ON':'OFF'}</button>`;return `<div class="section-row plugin-heading"><div><div class="red-label">ORGANISED LIBRARY</div><h3>PLUGINS<span>.</span></h3><p>Mac and Windows categories are separate. Editing one never changes the other.</p></div>${controls}</div>${dragMode?'<p class="drag-mode-note">Drag categories, plugins, and spacing bars. Your layout is saved automatically and appears in the same order on the website.</p>':''}<div class="platform-columns">${panel('mac')}${panel('windows')}</div>`; }
   function overview() {
     const p = state.plugins, m = p.filter(x=>x.platforms?.mac?.url).length, w = p.filter(x=>x.platforms?.windows?.url).length;
     const live=state.analytics?.liveVisitors||0, views=state.analytics?.pageViews24h||0, month=state.analytics?.views30d||0, series=state.analytics?.series||[], peak=Math.max(1,...series.map(item=>item.value||0));
@@ -95,11 +134,50 @@
     const mods = state.moderators || [];
     return `<div class="section-row"><div><div class="red-label">ADMIN ACCESS CONTROL</div><h3>SECURITY<span>.</span></h3><p>Create moderator accounts for Plugins and Messages only. Settings, Emergency and Security stay admin-only.</p></div></div><section class="content-box security-box"><h4>RESET ADMIN PASSWORD</h4><p>Set a new 8+ character admin password. Your Cloudflare emergency password remains a recovery login.</p><form id="adminPasswordForm" class="admin-form"><label>NEW ADMIN PASSWORD<input name="password" type="password" minlength="8" required autocomplete="new-password"></label><button class="primary">SAVE ADMIN PASSWORD</button></form></section><section class="content-box security-box"><h4>ADD MODERATOR</h4><form id="moderatorForm" class="admin-form two-col"><label>USERNAME<input name="username" required minlength="3" maxlength="40" placeholder="e.g. shivam"></label><label>PASSWORD<input name="password" type="password" minlength="8" required autocomplete="new-password"></label><button class="primary">CREATE MODERATOR</button></form><div class="plugin-list">${mods.length ? mods.map(m=>`<div class="plugin-row"><div><strong>${esc(m.username)}</strong><small>Moderator · Plugins + Messages only</small></div><div><button class="table-action" data-reset-mod="${esc(m.id)}">RESET PASSWORD</button><button class="table-action danger" data-delete-mod="${esc(m.id)}">REMOVE</button></div></div>`).join('') : '<div class="empty">No moderators created yet.</div>'}</div></section>`;
   }
+  async function saveLayout() {
+    ensureLayout();
+    if (online) state.layout=(await api('/admin/layout','POST',{layout:state.layout})).layout || state.layout;
+    else save();
+  }
+  async function addSpacing(os, parentId='') {
+    try {
+      ensureLayout();
+      if(online) state.layout=(await api('/admin/layout/spacers','POST',{platform:os,categoryId:parentId})).layout || state.layout;
+      else { const item={type:'spacer',id:crypto.randomUUID()}; if(parentId){const c=layoutFor(os).find(x=>x.id===parentId);if(c)c.items.push(item)}else layoutFor(os).push(item);save(); }
+      render();toast('Spacing added');
+    } catch(error) { toast(error.message); }
+  }
+  async function removeSpacing(os, spacerId) {
+    try {
+      if(online) state.layout=(await api('/admin/layout/spacers','DELETE',{platform:os,spacerId})).layout || state.layout;
+      else { state.layout[os]=layoutFor(os).filter(x=>x.id!==spacerId).map(x=>x.type==='category'?{...x,items:x.items.filter(i=>i.id!==spacerId)}:x);save(); }
+      render();toast('Spacing removed');
+    } catch(error) { toast(error.message); }
+  }
+  function moveItem(list, fromId, targetId) {
+    const source=list.findIndex(item=>item.id===fromId), target=list.findIndex(item=>item.id===targetId);
+    if(source<0||target<0||source===target)return false;
+    const [item]=list.splice(source,1);list.splice(target,0,item);return true;
+  }
+  function enableDragAndDrop() {
+    if(page!=='plugins'||!dragMode)return;
+    document.querySelectorAll('.plugin-category,.plugin-row,.admin-layout-space').forEach(el=>{
+      const category=el.closest('.plugin-category');
+      if(el.classList.contains('plugin-row')) { const edit=el.querySelector('[data-edit]'); el.dataset.layoutKind='plugin';el.dataset.layoutOs=edit?.dataset.os||'';el.dataset.layoutId=edit?.dataset.edit||'';el.dataset.layoutParent=category?.dataset.layoutId||''; }
+      el.draggable=true;el.classList.add('layout-draggable');
+      el.addEventListener('dragstart',event=>{event.stopPropagation();dragging={kind:el.dataset.layoutKind,os:el.dataset.layoutOs,id:el.dataset.layoutId,parent:el.dataset.layoutParent||''};event.dataTransfer.effectAllowed='move';event.dataTransfer.setData('text/plain',dragging.id);el.classList.add('is-dragging')});
+      el.addEventListener('dragend',()=>{dragging=null;document.querySelectorAll('.is-dragging,.is-drag-over').forEach(node=>node.classList.remove('is-dragging','is-drag-over'))});
+      el.addEventListener('dragover',event=>{if(!dragging||dragging.os!==el.dataset.layoutOs)return;const sameLevel=(dragging.parent||'')===(el.dataset.layoutParent||'');const sourceTop=!dragging.parent,targetTop=!el.dataset.layoutParent;if((sourceTop&&targetTop)||(dragging.parent&&sameLevel)){event.preventDefault();event.dataTransfer.dropEffect='move';el.classList.add('is-drag-over')}});
+      el.addEventListener('dragleave',()=>el.classList.remove('is-drag-over'));
+      el.addEventListener('drop',async event=>{event.preventDefault();el.classList.remove('is-drag-over');if(!dragging||dragging.id===el.dataset.layoutId)return;const sameLevel=(dragging.parent||'')===(el.dataset.layoutParent||'');if(dragging.os!==el.dataset.layoutOs||!sameLevel)return;const list=dragging.parent?layoutFor(dragging.os).find(x=>x.id===dragging.parent)?.items:layoutFor(dragging.os);if(!list||!moveItem(list,dragging.id,el.dataset.layoutId))return;try{await saveLayout();render();toast('Order saved — live website updated')}catch(error){toast(error.message);await loadOnline();render()}});
+    });
+  }
   function render() {
     const view={overview,plugins,messages,emergency,settings,security}[page]();
     $('#app').innerHTML = `${nav()}<div class="admin-main"><header class="admin-top"><div><span class="red-label">VELO STAFF / ${esc(state.actor?.name||'ADMIN')}</span><h2>${page[0].toUpperCase()+page.slice(1)}</h2></div><button id="quickAdd" class="primary">+ ADD PLUGIN</button></header><div class="app-content">${view}</div><footer class="admin-footer"><span>VELO STAFF</span><span>${online?'D1 LIVE SYNC':'DIRECT BROWSER STORAGE'}</span></footer></div>`;
     $('#app').classList.remove('hidden'); $('#login').classList.add('hidden');
     $('#quickAdd').onclick=()=>{page='plugins';editor={os:'windows',plugin:null};render()};
+    if(page==='plugins'&&$('#dragModeToggle')) { $('#dragModeToggle').onclick=()=>{dragMode=!dragMode;render()}; enableDragAndDrop(); }
     if(page==='overview'&&$('#analyticsPeriod')) $('#analyticsPeriod').onchange=async e=>{analyticsPeriod=e.target.value;try{state.analytics=(await api(`/admin/analytics?period=${analyticsPeriod}`)).analytics;render()}catch(error){toast(error.message)}};
     if(page==='messages'&&state.requests.length){
       const boxes=[...document.querySelectorAll('[data-request-select]')], all=$('#selectAllRequests'), selected=$('#selectedRequestCount'), removeSelected=$('#deleteSelectedRequests');
@@ -125,12 +203,14 @@
       render();toast(`${count} message${count===1?'':'s'} deleted`)
     }catch(error){toast(error.message)}
   }
-  $('#app').addEventListener('click', e => {
+  $('#app').addEventListener('click', async e => {
     const pageBtn=e.target.closest('[data-page]');
     if(pageBtn){page=pageBtn.dataset.page;editor=null;render();return}
-    const b=e.target.closest('[data-start],[data-add],[data-remove],[data-edit],[data-delete],[data-rename-category],[data-reset-mod],[data-delete-mod],[data-emergency-start],[data-emergency-add],[data-emergency-delete]');
+    const b=e.target.closest('[data-start],[data-add],[data-remove],[data-edit],[data-delete],[data-rename-category],[data-rename-category-id],[data-add-spacing],[data-remove-spacing],[data-reset-mod],[data-delete-mod],[data-emergency-start],[data-emergency-add],[data-emergency-delete]');
     if(!b)return;
     if(b.dataset.start){editor={os:b.dataset.start,plugin:null};render();return}
+    if(b.dataset.addSpacing){e.preventDefault();e.stopPropagation();addSpacing(b.dataset.addSpacing,b.dataset.parent||'');return}
+    if(b.dataset.removeSpacing){e.preventDefault();e.stopPropagation();removeSpacing(b.dataset.os,b.dataset.removeSpacing);return}
     if(b.dataset.emergencyStart){const os=b.dataset.emergencyStart;emergencyEditor={os,plugin:{title:'',version:'1.0',platforms:{mac:{},windows:{},[os]:{url:'',alternatives:[]}}}};render();return}
     if(b.hasAttribute('data-emergency-add')){b.previousElementSibling.insertAdjacentHTML('beforeend',alt());return}
     if(b.dataset.emergencyDelete){if(!confirm('Delete this emergency plugin?'))return;api(`/admin/emergency/plugins/${encodeURIComponent(b.dataset.emergencyDelete)}`,'DELETE').then(loadOnline).then(()=>{render();toast('Emergency plugin deleted')}).catch(error=>toast(error.message));return}
@@ -140,6 +220,17 @@
     if(b.dataset.delete){if(!confirm('Delete this plugin?'))return;if(online){api(`/admin/plugins/${encodeURIComponent(b.dataset.delete)}`,'DELETE').then(loadOnline).then(()=>{render();toast('Plugin deleted')}).catch(error=>toast(error.message))}else{state.plugins=state.plugins.filter(p=>p.id!==b.dataset.delete);save();render();toast('Plugin deleted')}return}
     if(b.dataset.resetMod){const password=prompt('New moderator password (minimum 8 characters)');if(!password)return;if(password.length<8){toast('Password needs at least 8 characters');return}api(`/admin/moderators/${encodeURIComponent(b.dataset.resetMod)}`,'PUT',{password}).then(data=>{state.moderators=data.moderators||[];render();toast('Moderator password reset')}).catch(error=>toast(error.message));return}
     if(b.dataset.deleteMod){if(!confirm('Remove this moderator?'))return;api(`/admin/moderators/${encodeURIComponent(b.dataset.deleteMod)}`,'DELETE').then(()=>{state.moderators=state.moderators.filter(m=>m.id!==b.dataset.deleteMod);render();toast('Moderator removed')}).catch(error=>toast(error.message));return}
+    if(b.dataset.renameCategoryId){
+      e.preventDefault();e.stopPropagation();
+      const os=b.dataset.os, entry=layoutFor(os).find(item=>item.id===b.dataset.renameCategoryId), old=entry?.name||'';
+      const next=prompt(`Rename ${title(os)} category`,old)?.trim();if(!next||next===old)return;
+      try {
+        if(online){const data=await api('/admin/layout/categories/rename','POST',{platform:os,categoryId:entry.id,name:next});state.plugins=data.plugins||state.plugins;state.layout=data.layout||state.layout}
+        else {state.plugins.forEach(p=>{if(p.platforms?.[os]?.url&&cat(p,os)===old){p.platformCategories??={};p.platformCategories[os]=next}});entry.name=next;save()}
+        render();toast(`${title(os)} category renamed`);
+      } catch(error){toast(error.message)}
+      return;
+    }
     if(b.dataset.renameCategory){
       e.preventDefault();e.stopPropagation();
       const old=b.dataset.renameCategory, os=b.dataset.os, next=prompt(`Rename ${title(os)} category`,old)?.trim();
